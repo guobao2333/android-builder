@@ -177,7 +177,7 @@ jobs:
               return proc.stdout
 
           def available_modules() -> list[str]:
-              out = run_gradle("projects", "--all")
+              out = run_gradle("projects")
               modules: list[str] = []
               for line in out.splitlines():
                   match = re.search(r"Project '(:[^']+)'", line)
