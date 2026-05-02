@@ -68,7 +68,7 @@ on:
         options: ['r29', 'r28c', 'r27d', 'r26d', 'r25c', 'r24', 'r23c', 'r22b', 'r21e', 'r20b']
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   setup-matrix:
@@ -139,7 +139,7 @@ jobs:
           import re
           import subprocess
           import sys
-          from pathlib import Path
+          from datetime import datetime, timezone
 
           def canonical_module(raw: str) -> str:
               raw = raw.strip()
@@ -214,15 +214,23 @@ jobs:
                   task.startswith("bundle") and not task.endswith("Aar") for task in tasks
               )
 
-          def variant_from_task(task: str) -> tuple[str, str] | None:
+          def variant_from_task(task: str) -> tuple[str, str, str] | None:
               match = re.match(r"^(assemble|bundle)([A-Z][A-Za-z0-9]*)?(Debug|Release)$", task)
               if not match:
                   return None
               prefix, flavor, suffix = match.groups()
               build_type = suffix.lower()
-              if prefix == "bundle" and build_type != "release":
+              artifact_type = "aab" if prefix == "bundle" else "apk"
+              if artifact_type == "aab" and build_type != "release":
                   return None
-              return flavor or "", build_type
+              return flavor or "", build_type, artifact_type
+
+          def matches_requested_build(build_type_input: str, build_type: str, artifact_type: str) -> bool:
+              if build_type_input == "all":
+                  return True
+              if build_type_input == "aab":
+                  return build_type == "release" and artifact_type == "aab"
+              return build_type == build_type_input and artifact_type == "apk"
 
           def format_error(message: str) -> None:
               print(f"::error::{message}", file=sys.stderr)
@@ -233,8 +241,7 @@ jobs:
           module_input = os.environ.get("INPUT_MODULE", "").strip()
           build_flavor_input = os.environ.get("INPUT_BUILD_FLAVOR", "").strip()
           build_type_input = os.environ.get("INPUT_BUILD_TYPE", "").strip()
-          date_long = os.environ.get("DATE_LONG", "").strip()
-          version_name = os.environ.get("VERSION_NAME", "").strip() or os.environ.get("GITHUB_RUN_NUMBER", "0").strip()
+          date_long = os.environ.get("DATE_LONG", "").strip() or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
           if build_type_input not in {"debug", "release", "aab", "all"}:
               format_error(f"Unsupported build_type: {build_type_input}")
@@ -272,7 +279,7 @@ jobs:
 
           matrix_entries: list[dict[str, str]] = []
           module_errors: list[str] = []
-          seen: set[tuple[str, str, str]] = set()
+          seen: set[tuple[str, str, str, str]] = set()
 
           for module in candidate_modules:
               tasks = collect_tasks(module)
@@ -291,9 +298,9 @@ jobs:
                   parsed = variant_from_task(task)
                   if not parsed:
                       continue
-                  flavor, build_type = parsed
+                  flavor, build_type, artifact_type = parsed
 
-                  if build_type_input != "all" and build_type != build_type_input:
+                  if not matches_requested_build(build_type_input, build_type, artifact_type):
                       continue
 
                   if requested_flavors:
@@ -304,12 +311,11 @@ jobs:
                           continue
 
                   flavor_safe = slug(flavor, "") if flavor else ""
-                  if flavor:
-                      artifact_name = f"{repo_name}-{module_safe}-{flavor_safe}-{build_type}-{date_long}"
-                  else:
-                      artifact_name = f"{repo_name}-{module_safe}-{build_type}-{date_long}"
+                  variant_label = "aab" if artifact_type == "aab" else build_type
+                  artifact_name_parts = [repo_name, module_safe, flavor_safe, variant_label, date_long]
+                  artifact_name = "-".join(part for part in artifact_name_parts if part)
 
-                  key = (module, flavor, build_type)
+                  key = (module, flavor, build_type, artifact_type)
                   if key in seen:
                       continue
                   seen.add(key)
@@ -324,6 +330,8 @@ jobs:
                           "flavor": flavor,
                           "flavor_safe": flavor_safe,
                           "build_type": build_type,
+                          "artifact_type": artifact_type,
+                          "variant_label": variant_label,
                           "gradle_task": gradle_task,
                           "artifact_name": artifact_name,
                       }
@@ -386,10 +394,16 @@ jobs:
 
       - name: Run gradle tests
         shell: bash
+        env:
+          BUILD_OPTIONS: ${{ inputs.build_options }}
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew build --no-daemon --stacktrace ${{ inputs.build_options }}
+          EXTRA_GRADLE_ARGS=()
+          if [ -n "$BUILD_OPTIONS" ]; then
+            read -r -a EXTRA_GRADLE_ARGS <<< "$BUILD_OPTIONS"
+          fi
+          ./gradlew build --no-daemon --stacktrace "${EXTRA_GRADLE_ARGS[@]}"
 
   build:
     needs: setup-matrix
@@ -422,27 +436,39 @@ jobs:
 
       - name: Validate build target
         shell: bash
+        env:
+          MATRIX_MODULE: ${{ matrix.module }}
+          MATRIX_MODULE_DIR: ${{ matrix.module_dir }}
+          MATRIX_GRADLE_TASK: ${{ matrix.gradle_task }}
         run: |
           set -euo pipefail
-          if [ -z '${{ matrix.module }}' ]; then
+          if [ -z "$MATRIX_MODULE" ]; then
             echo '::error::Matrix entry missing module.'
             exit 1
           fi
-          if [ -z '${{ matrix.gradle_task }}' ]; then
+          if [ -z "$MATRIX_GRADLE_TASK" ]; then
             echo '::error::Matrix entry missing gradle_task.'
             exit 1
           fi
-          if [ ! -d '${{ matrix.module_dir }}' ]; then
-            echo '::error::Module directory not found: ${{ matrix.module_dir }}'
+          if [ ! -d "$MATRIX_MODULE_DIR" ]; then
+            echo "::error::Module directory not found: $MATRIX_MODULE_DIR"
             exit 1
           fi
 
       - name: Build project
         shell: bash
+        env:
+          MATRIX_MODULE: ${{ matrix.module }}
+          MATRIX_GRADLE_TASK: ${{ matrix.gradle_task }}
+          BUILD_OPTIONS: ${{ inputs.build_options }}
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew ":${{ matrix.module }}:${{ matrix.gradle_task }}" --no-daemon --stacktrace ${{ inputs.build_options }}
+          EXTRA_GRADLE_ARGS=()
+          if [ -n "$BUILD_OPTIONS" ]; then
+            read -r -a EXTRA_GRADLE_ARGS <<< "$BUILD_OPTIONS"
+          fi
+          ./gradlew "${MATRIX_MODULE}:${MATRIX_GRADLE_TASK}" --no-daemon --stacktrace "${EXTRA_GRADLE_ARGS[@]}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
@@ -457,6 +483,8 @@ jobs:
     if: ${{ inputs.upload_release == true }}
     needs: [setup-matrix, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v8
