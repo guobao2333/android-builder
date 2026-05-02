@@ -441,6 +441,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          chmod +x ./gradlew
           ./gradlew ":${{ matrix.module }}:${{ matrix.gradle_task }}" --no-daemon --stacktrace ${{ inputs.build_options }}
 
       - name: Upload artifacts
