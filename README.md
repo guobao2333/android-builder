@@ -2,7 +2,7 @@
 
 This repository contains a manually triggered GitHub Actions workflow for building installable Android artifacts (APK / AAB) from the current repository or from another target repository.
 
-[中文说明](README-zh_CN.md) | :star: English README
+[中文说明](README-zh_CN.md)
 
 ---
 
@@ -15,7 +15,7 @@ The workflow defined in `android.yml`:
 - Uses the target repository default branch when `branch` is empty.
 - Supports a `CHECKOUT_TOKEN` secret for private repositories or private submodules, and falls back to `github.token` for normal access.
 - Sets up Temurin JDK, Android NDK, and Gradle cache.
-- Verifies that the requested NDK revision is installed completely, repairing or installing it with `sdkmanager` when needed.
+- Verifies that the requested NDK revision is installed completely, repairing or installing it with `sdkmanager` when needed, using the correct host toolchain path for Linux or macOS runners.
 - Keeps shared CI logic in `.github/scripts/android-ci/` so NDK verification, pre-build resolution, and Gradle option parsing are not duplicated across jobs.
 - Resolves source metadata: branch/ref, full SHA, short SHA, repository name, and version name.
 - Reads `gradle.properties` for `versionName`, `VERSION_NAME`, or `version`; if none is found, the GitHub run number is used as `version_name`.
@@ -55,9 +55,29 @@ The workflow checks out the workflow repository at `github.sha` into a separate 
 | **go_version** | Go version passed to `actions/setup-go` when the pre-build command needs Go. | `string` | `^1.25` |
 | **build_test** | Run a separate `./gradlew build` job before the build matrix. | `boolean` | `false` |
 | **upload_release** | Publish a GitHub Release after successful builds. | `boolean` | `false` |
-| **os_version** | Runner image for test/build jobs. | choice: `ubuntu-latest`, `ubuntu-22.04` | `ubuntu-latest` |
+| **os_version** | Runner image for test/build jobs. `setup-matrix` and `release` stay on `ubuntu-latest`. | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
 | **jdk_version** | Temurin JDK version. | choice: `26`, `25`, `24`, `23`, `22`, `21`, `17`, `11`, `8` | `21` |
 | **ndk_version** | Android NDK alias. | choice: `r29`, `r28c`, `r27d`, `r26d`, `r25c`, `r24`, `r23c`, `r22b`, `r21e`, `r20b` | `r27d` |
+
+## Runner behavior
+
+`os_version` controls only the `test` and `build` jobs. The lightweight `setup-matrix` job and the final `release` job always run on `ubuntu-latest` so module discovery and release publishing remain stable.
+
+Available runner labels include Linux x64 and macOS runners:
+
+| Runner label | Platform / architecture | Suggested use |
+|---|---|---|
+| `ubuntu-latest` | Linux x64, GitHub's current stable Ubuntu image | Default Android builds. |
+| `ubuntu-24.04` | Linux x64, pinned Ubuntu 24.04 | Reproducible Linux x64 builds. |
+| `ubuntu-22.04` | Linux x64, pinned Ubuntu 22.04 | Older toolchain compatibility. |
+| `macos-latest` | macOS arm64, GitHub's current stable macOS image | macOS build validation without pinning a version. |
+| `macos-26` | macOS arm64, pinned macOS 26 | Reproducible Apple Silicon builds. |
+| `macos-15` | macOS arm64, pinned macOS 15 | Apple Silicon builds requiring macOS 15. |
+| `macos-26-intel` | macOS Intel x86_64, pinned macOS 26 | x86_64 macOS builds. |
+| `macos-15-intel` | macOS Intel x86_64, pinned macOS 15 | x86_64 macOS builds with older macOS 15 image. |
+
+The NDK verification helper detects the host OS and checks the matching NDK toolchain directory: `linux-x86_64` on Linux and `darwin-x86_64` on macOS. Pre-build cache keys include both `runner.os` and `runner.arch` so macOS Intel and macOS arm64 runs do not share incompatible cached outputs.
+
 
 ## Build type behavior
 
@@ -181,7 +201,7 @@ The workflow writes a GitHub step summary containing:
 - Source SHA.
 - Module, flavor, build type, raw/normalized build options, pre-build command, and Go version.
 - Build/test/release options.
-- OS, JDK, requested NDK, resolved NDK revision, and `ANDROID_NDK_HOME`.
+- Runner label, JDK, requested NDK, resolved NDK revision, and `ANDROID_NDK_HOME`.
 - Version name.
 - Final build matrix with module, flavor, build type, artifact type, Gradle task, and artifact name.
 
@@ -303,7 +323,7 @@ gh workflow run android.yml \
 - `build_options` has invalid shell quoting / JSON syntax, or contains arguments that Gradle does not understand.
 - Custom `pre_build_command` fails.
 - Auto pre-build mode runs but does not produce `app/libs/libcore.aar`.
-- Requested NDK version cannot be installed or is incomplete after repair.
+- Requested NDK version cannot be installed, the host-specific NDK toolchain is missing, or repair still leaves the NDK incomplete.
 
 ## License
 

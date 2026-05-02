@@ -2,7 +2,7 @@
 
 此仓库包含一个手动触发的 GitHub Actions 工作流，用于从当前仓库或其他目标仓库构建 Android 可安装产物（APK / AAB）。
 
-:star: 中文说明 | [English README](README.md)
+[English README](README.md)
 
 ---
 
@@ -15,7 +15,7 @@
 - 当 `branch` 为空时，使用目标仓库的默认分支。
 - 支持通过 `CHECKOUT_TOKEN` secret 访问私有仓库或私有 submodules；未配置时回退到 `github.token`。
 - 设置 Temurin JDK、Android NDK 和 Gradle 缓存。
-- 校验请求的 NDK revision 是否完整安装；缺失或不完整时会尝试通过 `sdkmanager` 修复或安装。
+- 校验请求的 NDK revision 是否完整安装；缺失或不完整时会尝试通过 `sdkmanager` 修复或安装，并按 Linux/macOS runner 选择正确的宿主工具链路径。
 - 将公共 CI 逻辑放在 `.github/scripts/android-ci/` 中，避免 NDK 校验、pre-build 解析和 Gradle 参数解析在多个 job 中重复。
 - 解析源码元信息：branch/ref、完整 SHA、短 SHA、仓库名和版本名。
 - 从 `gradle.properties` 读取 `versionName`、`VERSION_NAME` 或 `version`；都不存在时使用 GitHub run number 作为 `version_name`。
@@ -55,9 +55,29 @@ workflow 会把运行 workflow 的仓库按 `github.sha` checkout 到单独的 h
 | **go_version** | 当前置构建需要 Go 时传给 `actions/setup-go` 的 Go 版本。 | `string` | `^1.25` |
 | **build_test** | 是否在 build matrix 前单独运行 `./gradlew build`。 | `boolean` | `false` |
 | **upload_release** | 构建成功后是否发布 GitHub Release。 | `boolean` | `false` |
-| **os_version** | test/build job 使用的 runner 镜像。 | choice: `ubuntu-latest`, `ubuntu-22.04` | `ubuntu-latest` |
+| **os_version** | test/build job 使用的 runner 镜像。`setup-matrix` 和 `release` 固定使用 `ubuntu-latest`。 | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
 | **jdk_version** | Temurin JDK 版本。 | choice: `26`, `25`, `24`, `23`, `22`, `21`, `17`, `11`, `8` | `21` |
 | **ndk_version** | Android NDK alias。 | choice: `r29`, `r28c`, `r27d`, `r26d`, `r25c`, `r24`, `r23c`, `r22b`, `r21e`, `r20b` | `r27d` |
+
+## Runner 行为
+
+`os_version` 只控制 `test` 和 `build` jobs。轻量的 `setup-matrix` job 和最终的 `release` job 始终运行在 `ubuntu-latest`，以保持模块探测和发布流程稳定。
+
+可选 runner label 包括 Linux x64 和 macOS runner：
+
+| Runner label | 平台 / 架构 | 建议用途 |
+|---|---|---|
+| `ubuntu-latest` | Linux x64，GitHub 当前稳定 Ubuntu 镜像 | 默认 Android 构建。 |
+| `ubuntu-24.04` | Linux x64，固定 Ubuntu 24.04 | 可复现的 Linux x64 构建。 |
+| `ubuntu-22.04` | Linux x64，固定 Ubuntu 22.04 | 兼容较旧工具链。 |
+| `macos-latest` | macOS arm64，GitHub 当前稳定 macOS 镜像 | 不固定版本的 macOS 构建验证。 |
+| `macos-26` | macOS arm64，固定 macOS 26 | 可复现的 Apple Silicon 构建。 |
+| `macos-15` | macOS arm64，固定 macOS 15 | 需要 macOS 15 的 Apple Silicon 构建。 |
+| `macos-26-intel` | macOS Intel x86_64，固定 macOS 26 | x86_64 macOS 构建。 |
+| `macos-15-intel` | macOS Intel x86_64，固定 macOS 15 | 使用较旧 macOS 15 镜像的 x86_64 macOS 构建。 |
+
+NDK 校验 helper 会探测宿主 OS，并检查对应的 NDK 工具链目录：Linux 使用 `linux-x86_64`，macOS 使用 `darwin-x86_64`。pre-build 缓存 key 同时包含 `runner.os` 和 `runner.arch`，避免 macOS Intel 与 macOS arm64 运行复用不兼容缓存。
+
 
 ## build_type 行为
 
@@ -181,7 +201,7 @@ workflow 会写入 GitHub step summary，包含：
 - Source SHA。
 - module、flavor、build type、原始/规范化 build options、pre-build command 和 Go 版本。
 - build/test/release 选项。
-- OS、JDK、请求的 NDK、解析出的 NDK revision 和 `ANDROID_NDK_HOME`。
+- Runner label、JDK、请求的 NDK、解析出的 NDK revision 和 `ANDROID_NDK_HOME`。
 - version name。
 - 最终 build matrix：module、flavor、build type、artifact type、Gradle task 和 artifact name。
 
@@ -303,7 +323,7 @@ gh workflow run android.yml \
 - `build_options` 引号 / JSON 语法无效，或包含 Gradle 无法识别的参数。
 - 自定义 `pre_build_command` 执行失败。
 - auto 前置构建模式执行后未生成 `app/libs/libcore.aar`。
-- 请求的 NDK 版本无法安装，或修复后仍不完整。
+- 请求的 NDK 版本无法安装，宿主系统对应的 NDK 工具链缺失，或修复后仍不完整。
 
 ## 开源许可
 
