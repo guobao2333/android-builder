@@ -721,7 +721,7 @@ jobs:
 
       - name: Cache pre-build outputs
         if: ${{ steps.prebuild.outputs.cache_path != '' }}
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ steps.prebuild.outputs.cache_path }}
           key: ${{ runner.os }}-${{ runner.arch }}-${{ needs.setup-matrix.outputs.repository_name }}-${{ needs.setup-matrix.outputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
@@ -834,7 +834,7 @@ jobs:
 
       - name: Cache pre-build outputs
         if: ${{ steps.prebuild.outputs.cache_path != '' }}
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ steps.prebuild.outputs.cache_path }}
           key: ${{ runner.os }}-${{ runner.arch }}-${{ needs.setup-matrix.outputs.repository_name }}-${{ needs.setup-matrix.outputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
