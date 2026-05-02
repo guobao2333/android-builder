@@ -85,6 +85,8 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.branch || 'main' }}
           path: source
+          token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
+          submodules: recursive
 
       - name: Setup JDK
         uses: actions/setup-java@v5
@@ -366,6 +368,120 @@ jobs:
           print(f"matrix={json.dumps(matrix, ensure_ascii=False)}")
           PY
 
+      - name: Print resolved workflow inputs
+        shell: bash
+        env:
+          RESOLVED_REPOSITORY: ${{ steps.meta.outputs.repository }}
+          RESOLVED_REPOSITORY_NAME: ${{ steps.meta.outputs.repository_name }}
+          RESOLVED_BRANCH: ${{ inputs.branch || 'main' }}
+          RESOLVED_OS_VERSION: ${{ inputs.os_version }}
+          RESOLVED_JDK_VERSION: ${{ inputs.jdk_version }}
+          RESOLVED_NDK_VERSION: ${{ inputs.ndk_version }}
+          RESOLVED_BUILD_TEST: ${{ inputs.build_test }}
+          RESOLVED_UPLOAD_RELEASE: ${{ inputs.upload_release }}
+          RESOLVED_BUILD_OPTIONS: ${{ inputs.build_options }}
+          REQUESTED_MODULE: ${{ inputs.module }}
+          REQUESTED_BUILD_FLAVOR: ${{ inputs.build_flavor }}
+          REQUESTED_BUILD_TYPE: ${{ inputs.build_type }}
+          RESOLVED_VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          RESOLVED_MATRIX: ${{ steps.meta.outputs.matrix }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          def value(name: str, default: str = "") -> str:
+              return os.environ.get(name, default)
+
+          def md_escape(text: str) -> str:
+              return text.replace("|", "\\|").replace("\n", "<br>")
+
+          def add_input_row(rows: list[str], key: str, val: str) -> None:
+              rows.append(f"| `{key}` | `{md_escape(val)}` |")
+
+          matrix_json = value("RESOLVED_MATRIX", '{"include": []}')
+          try:
+              entries = json.loads(matrix_json).get("include", [])
+          except json.JSONDecodeError as exc:
+              print(f"::error::Unable to parse resolved matrix: {exc}", file=sys.stderr)
+              raise
+
+          rows = [
+              "### Resolved manual workflow inputs",
+              "",
+              "| Input | Final value used |",
+              "| --- | --- |",
+          ]
+          add_input_row(rows, "repository", value("RESOLVED_REPOSITORY"))
+          add_input_row(rows, "repository_name", value("RESOLVED_REPOSITORY_NAME"))
+          add_input_row(rows, "branch", value("RESOLVED_BRANCH"))
+          add_input_row(rows, "module", value("REQUESTED_MODULE"))
+          add_input_row(rows, "build_flavor", value("REQUESTED_BUILD_FLAVOR"))
+          add_input_row(rows, "build_type", value("REQUESTED_BUILD_TYPE"))
+          add_input_row(rows, "build_options", value("RESOLVED_BUILD_OPTIONS"))
+          add_input_row(rows, "build_test", value("RESOLVED_BUILD_TEST"))
+          add_input_row(rows, "upload_release", value("RESOLVED_UPLOAD_RELEASE"))
+          add_input_row(rows, "os_version", value("RESOLVED_OS_VERSION"))
+          add_input_row(rows, "jdk_version", value("RESOLVED_JDK_VERSION"))
+          add_input_row(rows, "ndk_version", value("RESOLVED_NDK_VERSION"))
+          add_input_row(rows, "version_name", value("RESOLVED_VERSION_NAME"))
+          add_input_row(rows, "checkout_submodules", "recursive")
+
+          rows.extend([
+              "",
+              "### Resolved build matrix",
+              "",
+              "| # | Module | Flavor | Build type | Artifact | Gradle task | Artifact name |",
+              "| ---: | --- | --- | --- | --- | --- | --- |",
+          ])
+
+          for index, item in enumerate(entries, start=1):
+              rows.append(
+                  "| {index} | `{module}` | `{flavor}` | `{build_type}` | `{artifact_type}` | `{task}` | `{artifact_name}` |".format(
+                      index=index,
+                      module=md_escape(item.get("module", "")),
+                      flavor=md_escape(item.get("flavor") or "-"),
+                      build_type=md_escape(item.get("build_type", "")),
+                      artifact_type=md_escape(item.get("artifact_type", "")),
+                      task=md_escape(item.get("gradle_task", "")),
+                      artifact_name=md_escape(item.get("artifact_name", "")),
+                  )
+              )
+
+          summary = "\n".join(rows) + "\n"
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as fh:
+                  fh.write(summary)
+
+          print("Resolved manual workflow inputs:")
+          print(f"  repository: {value('RESOLVED_REPOSITORY')}")
+          print(f"  branch: {value('RESOLVED_BRANCH')}")
+          print(f"  module input: {value('REQUESTED_MODULE')}")
+          print(f"  build_flavor input: {value('REQUESTED_BUILD_FLAVOR')}")
+          print(f"  build_type input: {value('REQUESTED_BUILD_TYPE')}")
+          print(f"  build_options: {value('RESOLVED_BUILD_OPTIONS')}")
+          print(f"  build_test: {value('RESOLVED_BUILD_TEST')}")
+          print(f"  upload_release: {value('RESOLVED_UPLOAD_RELEASE')}")
+          print(f"  os_version: {value('RESOLVED_OS_VERSION')}")
+          print(f"  jdk_version: {value('RESOLVED_JDK_VERSION')}")
+          print(f"  ndk_version: {value('RESOLVED_NDK_VERSION')}")
+          print(f"  version_name: {value('RESOLVED_VERSION_NAME')}")
+          print("Resolved build matrix:")
+          for index, item in enumerate(entries, start=1):
+              print(
+                  f"  {index}. module={item.get('module', '')} "
+                  f"flavor={item.get('flavor') or '-'} "
+                  f"build_type={item.get('build_type', '')} "
+                  f"artifact_type={item.get('artifact_type', '')} "
+                  f"gradle_task={item.get('gradle_task', '')} "
+                  f"artifact_name={item.get('artifact_name', '')}"
+              )
+          PY
+
   test:
     if: ${{ inputs.build_test }}
     needs: setup-matrix
@@ -376,6 +492,8 @@ jobs:
         with:
           repository: ${{ needs.setup-matrix.outputs.repository }}
           ref: ${{ inputs.branch || 'main' }}
+          token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
+          submodules: recursive
 
       - name: Setup JDK
         uses: actions/setup-java@v5
@@ -418,6 +536,8 @@ jobs:
         with:
           repository: ${{ needs.setup-matrix.outputs.repository }}
           ref: ${{ inputs.branch || 'main' }}
+          token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
+          submodules: recursive
 
       - name: Setup JDK
         uses: actions/setup-java@v5
