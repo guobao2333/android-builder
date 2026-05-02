@@ -1,4 +1,4 @@
-name: Android Build CI
+name: Android CI
 run-name: "${{ inputs.repository || github.repository }} @ ${{ inputs.branch || 'main' }} • #${{ github.run_number }}"
 
 on:
@@ -56,9 +56,9 @@ on:
       jdk_version:
         description: 'JDK Version'
         required: true
-        default: '17'
+        default: '21'
         type: choice
-        options: ['25', '24', '23', '22', '21', '17', '11', '8']
+        options: ['26', '25', '24', '23', '22', '21', '17', '11', '8']
 
       ndk_version:
         description: 'NDK Version'
