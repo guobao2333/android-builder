@@ -181,9 +181,31 @@ jobs:
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           TOOLCHAIN_REL="toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
 
+          resolve_ndk_revision() {
+            case "$1" in
+              r29|29.0.14033849) echo "29.0.14033849" ;;
+              r28c|28.2.13676358) echo "28.2.13676358" ;;
+              r27d|27.3.13750724) echo "27.3.13750724" ;;
+              r26d|26.3.11579264) echo "26.3.11579264" ;;
+              r25c|25.2.9519653) echo "25.2.9519653" ;;
+              r24|24.0.8215888) echo "24.0.8215888" ;;
+              r23c|23.2.8568313) echo "23.2.8568313" ;;
+              r22b|22.1.7171670) echo "22.1.7171670" ;;
+              r21e|21.4.7075529) echo "21.4.7075529" ;;
+              r20b|20.1.5948944) echo "20.1.5948944" ;;
+              [0-9]*.[0-9]*.[0-9]*) echo "$1" ;;
+              *)
+                echo "::error::Unable to map NDK version '$1' to a full SDK revision."
+                exit 1
+                ;;
+            esac
+          }
+
           read_ndk_revision() {
             local dir="$1"
-            awk -F'= *' '/^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$dir/source.properties"
+            if [ -f "$dir/source.properties" ]; then
+              awk -F'= *' '/^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$dir/source.properties"
+            fi
           }
 
           has_llvm_strip() {
@@ -191,100 +213,93 @@ jobs:
             [ -n "$dir" ] && [ -x "$dir/$TOOLCHAIN_REL" ]
           }
 
-          find_ndk_dir() {
+          is_requested_revision() {
+            local dir="${1:-}"
+            local revision=""
+            [ -n "$dir" ] || return 1
+            [ -d "$dir" ] || return 1
+            revision="$(read_ndk_revision "$dir" || true)"
+            [ "$revision" = "$REQUESTED_NDK_REVISION" ]
+          }
+
+          find_complete_requested_ndk() {
             local candidate
             for candidate in \
+              "$CANONICAL_NDK_DIR" \
+              "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION" \
+              "$HOME/.setup-ndk/$REQUESTED_NDK_REVISION" \
               "${ANDROID_NDK_HOME:-}" \
               "${ANDROID_NDK_ROOT:-}" \
-              "$SDK_ROOT/ndk"/* \
-              "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION"; do
+              "$SDK_ROOT/ndk"/*; do
               [ -n "$candidate" ] || continue
               [ -d "$candidate" ] || continue
-              [ -f "$candidate/source.properties" ] || continue
+              is_requested_revision "$candidate" || continue
+              has_llvm_strip "$candidate" || continue
               echo "$candidate"
               return 0
             done
             return 1
           }
 
-          NDK_DIR="$(find_ndk_dir || true)"
-          NDK_REVISION=""
-          if [ -n "$NDK_DIR" ]; then
-            NDK_REVISION="$(read_ndk_revision "$NDK_DIR" || true)"
-          fi
-
-          if [ -z "$NDK_REVISION" ]; then
-            case "$REQUESTED_NDK_VERSION" in
-              r29) NDK_REVISION="29.0.14033849" ;;
-              r28c) NDK_REVISION="28.2.13676358" ;;
-              r27d) NDK_REVISION="27.3.13750724" ;;
-              r26d) NDK_REVISION="26.3.11579264" ;;
-              r25c) NDK_REVISION="25.2.9519653" ;;
-              r24) NDK_REVISION="24.0.8215888" ;;
-              r23c) NDK_REVISION="23.2.8568313" ;;
-              r22b) NDK_REVISION="22.1.7171670" ;;
-              r21e) NDK_REVISION="21.4.7075529" ;;
-              r20b) NDK_REVISION="20.1.5948944" ;;
-              *)
-                echo "::error::Unable to map NDK alias '$REQUESTED_NDK_VERSION' to a full SDK revision."
-                exit 1
-                ;;
-            esac
-          fi
-
-          CANONICAL_NDK_DIR="$SDK_ROOT/ndk/$NDK_REVISION"
-          FINAL_NDK_DIR=""
-
-          for candidate in "$CANONICAL_NDK_DIR" "$NDK_DIR" "${ANDROID_NDK_HOME:-}" "${ANDROID_NDK_ROOT:-}"; do
-            if has_llvm_strip "$candidate"; then
-              FINAL_NDK_DIR="$candidate"
-              break
+          install_requested_ndk() {
+            local sdkmanager
+            sdkmanager="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+            if [ ! -x "$sdkmanager" ]; then
+              sdkmanager="$(command -v sdkmanager || true)"
             fi
-          done
-
-          if [ -z "$FINAL_NDK_DIR" ]; then
-            echo "::warning::NDK '$REQUESTED_NDK_VERSION' resolved to '$NDK_REVISION', but llvm-strip is missing. Reinstalling with sdkmanager."
-            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-            if [ ! -x "$SDKMANAGER" ]; then
-              SDKMANAGER="$(command -v sdkmanager || true)"
-            fi
-            if [ -z "$SDKMANAGER" ]; then
-              echo "::error::sdkmanager was not found; cannot repair the NDK installation."
+            if [ -z "$sdkmanager" ]; then
+              echo "::error::sdkmanager was not found; cannot install ndk;$REQUESTED_NDK_REVISION."
               exit 1
             fi
 
+            echo "Installing ndk;$REQUESTED_NDK_REVISION with sdkmanager."
             rm -rf "$CANONICAL_NDK_DIR"
 
             set +o pipefail
-            yes | "$SDKMANAGER" --licenses >/dev/null
-            LICENSE_STATUS=${PIPESTATUS[1]}
-            yes | "$SDKMANAGER" --install "ndk;$NDK_REVISION"
-            INSTALL_STATUS=${PIPESTATUS[1]}
+            yes | "$sdkmanager" --licenses >/dev/null
+            license_status=${PIPESTATUS[1]}
+            yes | "$sdkmanager" --install "ndk;$REQUESTED_NDK_REVISION"
+            install_status=${PIPESTATUS[1]}
             set -o pipefail
 
-            if [ "$LICENSE_STATUS" -ne 0 ]; then
-              echo "::warning::sdkmanager --licenses exited with status $LICENSE_STATUS; continuing because licenses may already be accepted."
+            if [ "$license_status" -ne 0 ]; then
+              echo "::warning::sdkmanager --licenses exited with status $license_status; continuing because licenses may already be accepted."
             fi
-            if [ "$INSTALL_STATUS" -ne 0 ]; then
-              echo "::error::sdkmanager failed to install ndk;$NDK_REVISION with status $INSTALL_STATUS."
-              exit "$INSTALL_STATUS"
+            if [ "$install_status" -ne 0 ]; then
+              echo "::error::sdkmanager failed to install ndk;$REQUESTED_NDK_REVISION with status $install_status."
+              exit "$install_status"
             fi
+          }
 
-            FINAL_NDK_DIR="$CANONICAL_NDK_DIR"
+          REQUESTED_NDK_REVISION="$(resolve_ndk_revision "$REQUESTED_NDK_VERSION")"
+          CANONICAL_NDK_DIR="$SDK_ROOT/ndk/$REQUESTED_NDK_REVISION"
+          mkdir -p "$SDK_ROOT/ndk"
+
+          COMPLETE_NDK_DIR="$(find_complete_requested_ndk || true)"
+
+          if [ -n "$COMPLETE_NDK_DIR" ] && [ "$COMPLETE_NDK_DIR" != "$CANONICAL_NDK_DIR" ]; then
+            echo "Found complete requested NDK at $COMPLETE_NDK_DIR; linking it to $CANONICAL_NDK_DIR for Gradle ndkVersion resolution."
+            rm -rf "$CANONICAL_NDK_DIR"
+            ln -s "$COMPLETE_NDK_DIR" "$CANONICAL_NDK_DIR"
           fi
 
-          if ! has_llvm_strip "$FINAL_NDK_DIR"; then
-            echo "::error::NDK installation is incomplete: missing $FINAL_NDK_DIR/$TOOLCHAIN_REL"
-            echo "Detected NDK directory contents:"
-            find "$FINAL_NDK_DIR" -maxdepth 4 -type f -o -type l 2>/dev/null | sort | head -200 || true
+          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
+            echo "::warning::Canonical NDK is missing or incomplete: $CANONICAL_NDK_DIR"
+            install_requested_ndk
+          fi
+
+          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
+            echo "::error::NDK installation is incomplete after repair: missing $CANONICAL_NDK_DIR/$TOOLCHAIN_REL or source.properties revision is not $REQUESTED_NDK_REVISION."
+            echo "Detected SDK NDK directories:"
+            find "$SDK_ROOT/ndk" -maxdepth 2 -name source.properties -print -exec awk -F'= *' '/^Pkg.Revision/ {print "  " FILENAME ": " $2}' {} \; 2>/dev/null || true
             exit 1
           fi
 
-          echo "ANDROID_NDK_HOME=$FINAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$FINAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "$FINAL_NDK_DIR" >> "$GITHUB_PATH"
-          echo "NDK verified: $REQUESTED_NDK_VERSION -> $NDK_REVISION ($FINAL_NDK_DIR)"
-
+          echo "ANDROID_NDK_HOME=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
+          echo "$CANONICAL_NDK_DIR" >> "$GITHUB_PATH"
+          echo "$CANONICAL_NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+          echo "NDK verified: $REQUESTED_NDK_VERSION -> $REQUESTED_NDK_REVISION ($CANONICAL_NDK_DIR)"
       - name: Resolve version name
         id: version
         shell: bash
@@ -589,6 +604,20 @@ jobs:
           def add_input_row(rows: list[str], key: str, val: str) -> None:
               rows.append(f"| `{key}` | `{md_escape(val)}` |")
 
+          def read_ndk_revision_from_env() -> str:
+              ndk_home = value("ANDROID_NDK_HOME")
+              if not ndk_home:
+                  return ""
+              source_properties = os.path.join(ndk_home, "source.properties")
+              try:
+                  with open(source_properties, "r", encoding="utf-8") as fh:
+                      for line in fh:
+                          if line.startswith("Pkg.Revision") and "=" in line:
+                              return line.split("=", 1)[1].strip()
+              except OSError:
+                  return ""
+              return ""
+
           matrix_json = value("RESOLVED_MATRIX", '{"include": []}')
           try:
               entries = json.loads(matrix_json).get("include", [])
@@ -618,6 +647,8 @@ jobs:
           add_input_row(rows, "os_version", value("RESOLVED_OS_VERSION"))
           add_input_row(rows, "jdk_version", value("RESOLVED_JDK_VERSION"))
           add_input_row(rows, "ndk_version", value("RESOLVED_NDK_VERSION"))
+          add_input_row(rows, "resolved_ndk_revision", read_ndk_revision_from_env())
+          add_input_row(rows, "android_ndk_home", value("ANDROID_NDK_HOME"))
           add_input_row(rows, "version_name", value("RESOLVED_VERSION_NAME"))
           add_input_row(rows, "checkout_submodules", "recursive")
 
@@ -664,6 +695,8 @@ jobs:
           print(f"  os_version: {value('RESOLVED_OS_VERSION')}")
           print(f"  jdk_version: {value('RESOLVED_JDK_VERSION')}")
           print(f"  ndk_version: {value('RESOLVED_NDK_VERSION')}")
+          print(f"  resolved_ndk_revision: {read_ndk_revision_from_env()}")
+          print(f"  android_ndk_home: {value('ANDROID_NDK_HOME')}")
           print(f"  version_name: {value('RESOLVED_VERSION_NAME')}")
           print("Resolved build matrix:")
           for index, item in enumerate(entries, start=1):
@@ -726,9 +759,31 @@ jobs:
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           TOOLCHAIN_REL="toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
 
+          resolve_ndk_revision() {
+            case "$1" in
+              r29|29.0.14033849) echo "29.0.14033849" ;;
+              r28c|28.2.13676358) echo "28.2.13676358" ;;
+              r27d|27.3.13750724) echo "27.3.13750724" ;;
+              r26d|26.3.11579264) echo "26.3.11579264" ;;
+              r25c|25.2.9519653) echo "25.2.9519653" ;;
+              r24|24.0.8215888) echo "24.0.8215888" ;;
+              r23c|23.2.8568313) echo "23.2.8568313" ;;
+              r22b|22.1.7171670) echo "22.1.7171670" ;;
+              r21e|21.4.7075529) echo "21.4.7075529" ;;
+              r20b|20.1.5948944) echo "20.1.5948944" ;;
+              [0-9]*.[0-9]*.[0-9]*) echo "$1" ;;
+              *)
+                echo "::error::Unable to map NDK version '$1' to a full SDK revision."
+                exit 1
+                ;;
+            esac
+          }
+
           read_ndk_revision() {
             local dir="$1"
-            awk -F'= *' '/^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$dir/source.properties"
+            if [ -f "$dir/source.properties" ]; then
+              awk -F'= *' '/^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$dir/source.properties"
+            fi
           }
 
           has_llvm_strip() {
@@ -736,101 +791,93 @@ jobs:
             [ -n "$dir" ] && [ -x "$dir/$TOOLCHAIN_REL" ]
           }
 
-          find_ndk_dir() {
+          is_requested_revision() {
+            local dir="${1:-}"
+            local revision=""
+            [ -n "$dir" ] || return 1
+            [ -d "$dir" ] || return 1
+            revision="$(read_ndk_revision "$dir" || true)"
+            [ "$revision" = "$REQUESTED_NDK_REVISION" ]
+          }
+
+          find_complete_requested_ndk() {
             local candidate
             for candidate in \
+              "$CANONICAL_NDK_DIR" \
+              "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION" \
+              "$HOME/.setup-ndk/$REQUESTED_NDK_REVISION" \
               "${ANDROID_NDK_HOME:-}" \
               "${ANDROID_NDK_ROOT:-}" \
-              "$SDK_ROOT/ndk"/* \
-              "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION"; do
+              "$SDK_ROOT/ndk"/*; do
               [ -n "$candidate" ] || continue
               [ -d "$candidate" ] || continue
-              [ -f "$candidate/source.properties" ] || continue
+              is_requested_revision "$candidate" || continue
+              has_llvm_strip "$candidate" || continue
               echo "$candidate"
               return 0
             done
             return 1
           }
 
-          NDK_DIR="$(find_ndk_dir || true)"
-          NDK_REVISION=""
-          if [ -n "$NDK_DIR" ]; then
-            NDK_REVISION="$(read_ndk_revision "$NDK_DIR" || true)"
-          fi
-
-          if [ -z "$NDK_REVISION" ]; then
-            case "$REQUESTED_NDK_VERSION" in
-              r29) NDK_REVISION="29.0.14033849" ;;
-              r28c) NDK_REVISION="28.2.13676358" ;;
-              r27d) NDK_REVISION="27.3.13750724" ;;
-              r26d) NDK_REVISION="26.3.11579264" ;;
-              r25c) NDK_REVISION="25.2.9519653" ;;
-              r24) NDK_REVISION="24.0.8215888" ;;
-              r23c) NDK_REVISION="23.2.8568313" ;;
-              r22b) NDK_REVISION="22.1.7171670" ;;
-              r21e) NDK_REVISION="21.4.7075529" ;;
-              r20b) NDK_REVISION="20.1.5948944" ;;
-              *)
-                echo "::error::Unable to map NDK alias '$REQUESTED_NDK_VERSION' to a full SDK revision."
-                exit 1
-                ;;
-            esac
-          fi
-
-          CANONICAL_NDK_DIR="$SDK_ROOT/ndk/$NDK_REVISION"
-          FINAL_NDK_DIR=""
-
-          for candidate in "$CANONICAL_NDK_DIR" "$NDK_DIR" "${ANDROID_NDK_HOME:-}" "${ANDROID_NDK_ROOT:-}"; do
-            if has_llvm_strip "$candidate"; then
-              FINAL_NDK_DIR="$candidate"
-              break
+          install_requested_ndk() {
+            local sdkmanager
+            sdkmanager="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+            if [ ! -x "$sdkmanager" ]; then
+              sdkmanager="$(command -v sdkmanager || true)"
             fi
-          done
-
-          if [ -z "$FINAL_NDK_DIR" ]; then
-            echo "::warning::NDK '$REQUESTED_NDK_VERSION' resolved to '$NDK_REVISION', but llvm-strip is missing. Reinstalling with sdkmanager."
-            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-            if [ ! -x "$SDKMANAGER" ]; then
-              SDKMANAGER="$(command -v sdkmanager || true)"
-            fi
-            if [ -z "$SDKMANAGER" ]; then
-              echo "::error::sdkmanager was not found; cannot repair the NDK installation."
+            if [ -z "$sdkmanager" ]; then
+              echo "::error::sdkmanager was not found; cannot install ndk;$REQUESTED_NDK_REVISION."
               exit 1
             fi
 
+            echo "Installing ndk;$REQUESTED_NDK_REVISION with sdkmanager."
             rm -rf "$CANONICAL_NDK_DIR"
 
             set +o pipefail
-            yes | "$SDKMANAGER" --licenses >/dev/null
-            LICENSE_STATUS=${PIPESTATUS[1]}
-            yes | "$SDKMANAGER" --install "ndk;$NDK_REVISION"
-            INSTALL_STATUS=${PIPESTATUS[1]}
+            yes | "$sdkmanager" --licenses >/dev/null
+            license_status=${PIPESTATUS[1]}
+            yes | "$sdkmanager" --install "ndk;$REQUESTED_NDK_REVISION"
+            install_status=${PIPESTATUS[1]}
             set -o pipefail
 
-            if [ "$LICENSE_STATUS" -ne 0 ]; then
-              echo "::warning::sdkmanager --licenses exited with status $LICENSE_STATUS; continuing because licenses may already be accepted."
+            if [ "$license_status" -ne 0 ]; then
+              echo "::warning::sdkmanager --licenses exited with status $license_status; continuing because licenses may already be accepted."
             fi
-            if [ "$INSTALL_STATUS" -ne 0 ]; then
-              echo "::error::sdkmanager failed to install ndk;$NDK_REVISION with status $INSTALL_STATUS."
-              exit "$INSTALL_STATUS"
+            if [ "$install_status" -ne 0 ]; then
+              echo "::error::sdkmanager failed to install ndk;$REQUESTED_NDK_REVISION with status $install_status."
+              exit "$install_status"
             fi
+          }
 
-            FINAL_NDK_DIR="$CANONICAL_NDK_DIR"
+          REQUESTED_NDK_REVISION="$(resolve_ndk_revision "$REQUESTED_NDK_VERSION")"
+          CANONICAL_NDK_DIR="$SDK_ROOT/ndk/$REQUESTED_NDK_REVISION"
+          mkdir -p "$SDK_ROOT/ndk"
+
+          COMPLETE_NDK_DIR="$(find_complete_requested_ndk || true)"
+
+          if [ -n "$COMPLETE_NDK_DIR" ] && [ "$COMPLETE_NDK_DIR" != "$CANONICAL_NDK_DIR" ]; then
+            echo "Found complete requested NDK at $COMPLETE_NDK_DIR; linking it to $CANONICAL_NDK_DIR for Gradle ndkVersion resolution."
+            rm -rf "$CANONICAL_NDK_DIR"
+            ln -s "$COMPLETE_NDK_DIR" "$CANONICAL_NDK_DIR"
           fi
 
-          if ! has_llvm_strip "$FINAL_NDK_DIR"; then
-            echo "::error::NDK installation is incomplete: missing $FINAL_NDK_DIR/$TOOLCHAIN_REL"
-            echo "Detected NDK directory contents:"
-            find "$FINAL_NDK_DIR" -maxdepth 4 -type f -o -type l 2>/dev/null | sort | head -200 || true
+          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
+            echo "::warning::Canonical NDK is missing or incomplete: $CANONICAL_NDK_DIR"
+            install_requested_ndk
+          fi
+
+          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
+            echo "::error::NDK installation is incomplete after repair: missing $CANONICAL_NDK_DIR/$TOOLCHAIN_REL or source.properties revision is not $REQUESTED_NDK_REVISION."
+            echo "Detected SDK NDK directories:"
+            find "$SDK_ROOT/ndk" -maxdepth 2 -name source.properties -print -exec awk -F'= *' '/^Pkg.Revision/ {print "  " FILENAME ": " $2}' {} \; 2>/dev/null || true
             exit 1
           fi
 
-          echo "ANDROID_NDK_HOME=$FINAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$FINAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "$FINAL_NDK_DIR" >> "$GITHUB_PATH"
-          echo "NDK verified: $REQUESTED_NDK_VERSION -> $NDK_REVISION ($FINAL_NDK_DIR)"
-
-
+          echo "ANDROID_NDK_HOME=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
+          echo "$CANONICAL_NDK_DIR" >> "$GITHUB_PATH"
+          echo "$CANONICAL_NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+          echo "NDK verified: $REQUESTED_NDK_VERSION -> $REQUESTED_NDK_REVISION ($CANONICAL_NDK_DIR)"
       - name: Resolve pre-build command
         id: prebuild
         shell: bash
@@ -899,10 +946,10 @@ jobs:
 
       - name: Setup Go
         if: ${{ steps.prebuild.outputs.uses_go == 'true' }}
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ inputs.go_version }}
-          cache: true
+          cache: false
 
       - name: Cache pre-build outputs
         if: ${{ steps.prebuild.outputs.cache_path != '' }}
@@ -1003,9 +1050,31 @@ jobs:
           SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
           TOOLCHAIN_REL="toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
 
+          resolve_ndk_revision() {
+            case "$1" in
+              r29|29.0.14033849) echo "29.0.14033849" ;;
+              r28c|28.2.13676358) echo "28.2.13676358" ;;
+              r27d|27.3.13750724) echo "27.3.13750724" ;;
+              r26d|26.3.11579264) echo "26.3.11579264" ;;
+              r25c|25.2.9519653) echo "25.2.9519653" ;;
+              r24|24.0.8215888) echo "24.0.8215888" ;;
+              r23c|23.2.8568313) echo "23.2.8568313" ;;
+              r22b|22.1.7171670) echo "22.1.7171670" ;;
+              r21e|21.4.7075529) echo "21.4.7075529" ;;
+              r20b|20.1.5948944) echo "20.1.5948944" ;;
+              [0-9]*.[0-9]*.[0-9]*) echo "$1" ;;
+              *)
+                echo "::error::Unable to map NDK version '$1' to a full SDK revision."
+                exit 1
+                ;;
+            esac
+          }
+
           read_ndk_revision() {
             local dir="$1"
-            awk -F'= *' '/^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$dir/source.properties"
+            if [ -f "$dir/source.properties" ]; then
+              awk -F'= *' '/^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$dir/source.properties"
+            fi
           }
 
           has_llvm_strip() {
@@ -1013,101 +1082,93 @@ jobs:
             [ -n "$dir" ] && [ -x "$dir/$TOOLCHAIN_REL" ]
           }
 
-          find_ndk_dir() {
+          is_requested_revision() {
+            local dir="${1:-}"
+            local revision=""
+            [ -n "$dir" ] || return 1
+            [ -d "$dir" ] || return 1
+            revision="$(read_ndk_revision "$dir" || true)"
+            [ "$revision" = "$REQUESTED_NDK_REVISION" ]
+          }
+
+          find_complete_requested_ndk() {
             local candidate
             for candidate in \
+              "$CANONICAL_NDK_DIR" \
+              "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION" \
+              "$HOME/.setup-ndk/$REQUESTED_NDK_REVISION" \
               "${ANDROID_NDK_HOME:-}" \
               "${ANDROID_NDK_ROOT:-}" \
-              "$SDK_ROOT/ndk"/* \
-              "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION"; do
+              "$SDK_ROOT/ndk"/*; do
               [ -n "$candidate" ] || continue
               [ -d "$candidate" ] || continue
-              [ -f "$candidate/source.properties" ] || continue
+              is_requested_revision "$candidate" || continue
+              has_llvm_strip "$candidate" || continue
               echo "$candidate"
               return 0
             done
             return 1
           }
 
-          NDK_DIR="$(find_ndk_dir || true)"
-          NDK_REVISION=""
-          if [ -n "$NDK_DIR" ]; then
-            NDK_REVISION="$(read_ndk_revision "$NDK_DIR" || true)"
-          fi
-
-          if [ -z "$NDK_REVISION" ]; then
-            case "$REQUESTED_NDK_VERSION" in
-              r29) NDK_REVISION="29.0.14033849" ;;
-              r28c) NDK_REVISION="28.2.13676358" ;;
-              r27d) NDK_REVISION="27.3.13750724" ;;
-              r26d) NDK_REVISION="26.3.11579264" ;;
-              r25c) NDK_REVISION="25.2.9519653" ;;
-              r24) NDK_REVISION="24.0.8215888" ;;
-              r23c) NDK_REVISION="23.2.8568313" ;;
-              r22b) NDK_REVISION="22.1.7171670" ;;
-              r21e) NDK_REVISION="21.4.7075529" ;;
-              r20b) NDK_REVISION="20.1.5948944" ;;
-              *)
-                echo "::error::Unable to map NDK alias '$REQUESTED_NDK_VERSION' to a full SDK revision."
-                exit 1
-                ;;
-            esac
-          fi
-
-          CANONICAL_NDK_DIR="$SDK_ROOT/ndk/$NDK_REVISION"
-          FINAL_NDK_DIR=""
-
-          for candidate in "$CANONICAL_NDK_DIR" "$NDK_DIR" "${ANDROID_NDK_HOME:-}" "${ANDROID_NDK_ROOT:-}"; do
-            if has_llvm_strip "$candidate"; then
-              FINAL_NDK_DIR="$candidate"
-              break
+          install_requested_ndk() {
+            local sdkmanager
+            sdkmanager="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+            if [ ! -x "$sdkmanager" ]; then
+              sdkmanager="$(command -v sdkmanager || true)"
             fi
-          done
-
-          if [ -z "$FINAL_NDK_DIR" ]; then
-            echo "::warning::NDK '$REQUESTED_NDK_VERSION' resolved to '$NDK_REVISION', but llvm-strip is missing. Reinstalling with sdkmanager."
-            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-            if [ ! -x "$SDKMANAGER" ]; then
-              SDKMANAGER="$(command -v sdkmanager || true)"
-            fi
-            if [ -z "$SDKMANAGER" ]; then
-              echo "::error::sdkmanager was not found; cannot repair the NDK installation."
+            if [ -z "$sdkmanager" ]; then
+              echo "::error::sdkmanager was not found; cannot install ndk;$REQUESTED_NDK_REVISION."
               exit 1
             fi
 
+            echo "Installing ndk;$REQUESTED_NDK_REVISION with sdkmanager."
             rm -rf "$CANONICAL_NDK_DIR"
 
             set +o pipefail
-            yes | "$SDKMANAGER" --licenses >/dev/null
-            LICENSE_STATUS=${PIPESTATUS[1]}
-            yes | "$SDKMANAGER" --install "ndk;$NDK_REVISION"
-            INSTALL_STATUS=${PIPESTATUS[1]}
+            yes | "$sdkmanager" --licenses >/dev/null
+            license_status=${PIPESTATUS[1]}
+            yes | "$sdkmanager" --install "ndk;$REQUESTED_NDK_REVISION"
+            install_status=${PIPESTATUS[1]}
             set -o pipefail
 
-            if [ "$LICENSE_STATUS" -ne 0 ]; then
-              echo "::warning::sdkmanager --licenses exited with status $LICENSE_STATUS; continuing because licenses may already be accepted."
+            if [ "$license_status" -ne 0 ]; then
+              echo "::warning::sdkmanager --licenses exited with status $license_status; continuing because licenses may already be accepted."
             fi
-            if [ "$INSTALL_STATUS" -ne 0 ]; then
-              echo "::error::sdkmanager failed to install ndk;$NDK_REVISION with status $INSTALL_STATUS."
-              exit "$INSTALL_STATUS"
+            if [ "$install_status" -ne 0 ]; then
+              echo "::error::sdkmanager failed to install ndk;$REQUESTED_NDK_REVISION with status $install_status."
+              exit "$install_status"
             fi
+          }
 
-            FINAL_NDK_DIR="$CANONICAL_NDK_DIR"
+          REQUESTED_NDK_REVISION="$(resolve_ndk_revision "$REQUESTED_NDK_VERSION")"
+          CANONICAL_NDK_DIR="$SDK_ROOT/ndk/$REQUESTED_NDK_REVISION"
+          mkdir -p "$SDK_ROOT/ndk"
+
+          COMPLETE_NDK_DIR="$(find_complete_requested_ndk || true)"
+
+          if [ -n "$COMPLETE_NDK_DIR" ] && [ "$COMPLETE_NDK_DIR" != "$CANONICAL_NDK_DIR" ]; then
+            echo "Found complete requested NDK at $COMPLETE_NDK_DIR; linking it to $CANONICAL_NDK_DIR for Gradle ndkVersion resolution."
+            rm -rf "$CANONICAL_NDK_DIR"
+            ln -s "$COMPLETE_NDK_DIR" "$CANONICAL_NDK_DIR"
           fi
 
-          if ! has_llvm_strip "$FINAL_NDK_DIR"; then
-            echo "::error::NDK installation is incomplete: missing $FINAL_NDK_DIR/$TOOLCHAIN_REL"
-            echo "Detected NDK directory contents:"
-            find "$FINAL_NDK_DIR" -maxdepth 4 -type f -o -type l 2>/dev/null | sort | head -200 || true
+          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
+            echo "::warning::Canonical NDK is missing or incomplete: $CANONICAL_NDK_DIR"
+            install_requested_ndk
+          fi
+
+          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
+            echo "::error::NDK installation is incomplete after repair: missing $CANONICAL_NDK_DIR/$TOOLCHAIN_REL or source.properties revision is not $REQUESTED_NDK_REVISION."
+            echo "Detected SDK NDK directories:"
+            find "$SDK_ROOT/ndk" -maxdepth 2 -name source.properties -print -exec awk -F'= *' '/^Pkg.Revision/ {print "  " FILENAME ": " $2}' {} \; 2>/dev/null || true
             exit 1
           fi
 
-          echo "ANDROID_NDK_HOME=$FINAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$FINAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "$FINAL_NDK_DIR" >> "$GITHUB_PATH"
-          echo "NDK verified: $REQUESTED_NDK_VERSION -> $NDK_REVISION ($FINAL_NDK_DIR)"
-
-
+          echo "ANDROID_NDK_HOME=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
+          echo "$CANONICAL_NDK_DIR" >> "$GITHUB_PATH"
+          echo "$CANONICAL_NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+          echo "NDK verified: $REQUESTED_NDK_VERSION -> $REQUESTED_NDK_REVISION ($CANONICAL_NDK_DIR)"
       - name: Resolve pre-build command
         id: prebuild
         shell: bash
@@ -1176,10 +1237,10 @@ jobs:
 
       - name: Setup Go
         if: ${{ steps.prebuild.outputs.uses_go == 'true' }}
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ inputs.go_version }}
-          cache: true
+          cache: false
 
       - name: Cache pre-build outputs
         if: ${{ steps.prebuild.outputs.cache_path != '' }}
@@ -1252,7 +1313,7 @@ jobs:
           ./gradlew "${MATRIX_MODULE}:${MATRIX_GRADLE_TASK}" --no-daemon --stacktrace "${EXTRA_GRADLE_ARGS[@]}"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_name }}
           path: |
