@@ -36,6 +36,16 @@ on:
         required: false
         default: ''
 
+      pre_build_command:
+        description: 'Pre-build command before Gradle (auto, none, or a shell command)'
+        required: false
+        default: 'auto'
+
+      go_version:
+        description: 'Go Version for pre-build commands that need Go'
+        required: false
+        default: '^1.25'
+
       build_test:
         description: 'Full Build Test'
         default: false
@@ -555,6 +565,8 @@ jobs:
           RESOLVED_BUILD_TEST: ${{ inputs.build_test }}
           RESOLVED_UPLOAD_RELEASE: ${{ inputs.upload_release }}
           RESOLVED_BUILD_OPTIONS: ${{ inputs.build_options }}
+          RESOLVED_PRE_BUILD_COMMAND: ${{ inputs.pre_build_command }}
+          RESOLVED_GO_VERSION: ${{ inputs.go_version }}
           REQUESTED_MODULE: ${{ inputs.module }}
           REQUESTED_BUILD_FLAVOR: ${{ inputs.build_flavor }}
           REQUESTED_BUILD_TYPE: ${{ inputs.build_type }}
@@ -599,6 +611,8 @@ jobs:
           add_input_row(rows, "build_flavor", value("REQUESTED_BUILD_FLAVOR"))
           add_input_row(rows, "build_type", value("REQUESTED_BUILD_TYPE"))
           add_input_row(rows, "build_options", value("RESOLVED_BUILD_OPTIONS"))
+          add_input_row(rows, "pre_build_command", value("RESOLVED_PRE_BUILD_COMMAND"))
+          add_input_row(rows, "go_version", value("RESOLVED_GO_VERSION"))
           add_input_row(rows, "build_test", value("RESOLVED_BUILD_TEST"))
           add_input_row(rows, "upload_release", value("RESOLVED_UPLOAD_RELEASE"))
           add_input_row(rows, "os_version", value("RESOLVED_OS_VERSION"))
@@ -643,6 +657,8 @@ jobs:
           print(f"  build_flavor input: {value('REQUESTED_BUILD_FLAVOR')}")
           print(f"  build_type input: {value('REQUESTED_BUILD_TYPE')}")
           print(f"  build_options: {value('RESOLVED_BUILD_OPTIONS')}")
+          print(f"  pre_build_command: {value('RESOLVED_PRE_BUILD_COMMAND')}")
+          print(f"  go_version: {value('RESOLVED_GO_VERSION')}")
           print(f"  build_test: {value('RESOLVED_BUILD_TEST')}")
           print(f"  upload_release: {value('RESOLVED_UPLOAD_RELEASE')}")
           print(f"  os_version: {value('RESOLVED_OS_VERSION')}")
@@ -814,6 +830,114 @@ jobs:
           echo "$FINAL_NDK_DIR" >> "$GITHUB_PATH"
           echo "NDK verified: $REQUESTED_NDK_VERSION -> $NDK_REVISION ($FINAL_NDK_DIR)"
 
+
+      - name: Resolve pre-build command
+        id: prebuild
+        shell: bash
+        env:
+          PRE_BUILD_COMMAND_INPUT: ${{ inputs.pre_build_command }}
+        run: |
+          set -euo pipefail
+
+          trim() {
+            local value="$1"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            printf '%s' "$value"
+          }
+
+          raw_command="$(trim "${PRE_BUILD_COMMAND_INPUT:-}")"
+          needed="false"
+          uses_go="false"
+          cache_path=""
+          mode="none"
+          command_value=""
+
+          case "$raw_command" in
+            ""|none|NONE|skip|SKIP)
+              mode="none"
+              ;;
+            auto|AUTO)
+              if [ -f ./run ] && [ -f libcore/build.sh ]; then
+                needed="true"
+                uses_go="true"
+                cache_path="app/libs/libcore.aar"
+                mode="auto-nekobox-libcore"
+                command_value="./run lib core"
+              else
+                mode="auto-none"
+              fi
+              ;;
+            *)
+              needed="true"
+              mode="manual"
+              command_value="$raw_command"
+              if [[ "$raw_command" == *go* ]] || [[ "$raw_command" == *gomobile* ]] || [[ "$raw_command" == *"./run lib core"* ]]; then
+                uses_go="true"
+              fi
+              ;;
+          esac
+
+          {
+            echo "needed=$needed"
+            echo "uses_go=$uses_go"
+            echo "cache_path=$cache_path"
+            echo "mode=$mode"
+            echo "command<<__PRE_BUILD_COMMAND__"
+            printf '%s\n' "$command_value"
+            echo "__PRE_BUILD_COMMAND__"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Pre-build mode: $mode"
+          echo "Pre-build needed: $needed"
+          if [ "$needed" = "true" ]; then
+            echo "Pre-build command: $command_value"
+            if [ -n "$cache_path" ]; then
+              echo "Pre-build output/cache path: $cache_path"
+            fi
+          fi
+
+      - name: Setup Go
+        if: ${{ steps.prebuild.outputs.uses_go == 'true' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go_version }}
+          cache: true
+
+      - name: Cache pre-build outputs
+        if: ${{ steps.prebuild.outputs.cache_path != '' }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.prebuild.outputs.cache_path }}
+          key: ${{ runner.os }}-${{ needs.setup-matrix.outputs.repository_name }}-${{ needs.setup-matrix.outputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
+
+      - name: Run pre-build command
+        if: ${{ steps.prebuild.outputs.needed == 'true' }}
+        shell: bash
+        env:
+          PRE_BUILD_COMMAND: ${{ steps.prebuild.outputs.command }}
+          PRE_BUILD_CACHE_PATH: ${{ steps.prebuild.outputs.cache_path }}
+          PRE_BUILD_MODE: ${{ steps.prebuild.outputs.mode }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$PRE_BUILD_CACHE_PATH" ] && [ -e "$PRE_BUILD_CACHE_PATH" ]; then
+            echo "Pre-build output already exists, skipping command: $PRE_BUILD_CACHE_PATH"
+            exit 0
+          fi
+
+          if [ "$PRE_BUILD_MODE" = "auto-nekobox-libcore" ]; then
+            chmod +x ./run libcore/*.sh buildScript/*.sh 2>/dev/null || true
+          fi
+
+          echo "Running pre-build command: $PRE_BUILD_COMMAND"
+          bash -eo pipefail -c "$PRE_BUILD_COMMAND"
+
+          if [ -n "$PRE_BUILD_CACHE_PATH" ] && [ ! -e "$PRE_BUILD_CACHE_PATH" ]; then
+            echo "::error::Pre-build command completed, but expected output was not found: $PRE_BUILD_CACHE_PATH"
+            exit 1
+          fi
+
       - name: Run gradle tests
         shell: bash
         env:
@@ -983,6 +1107,114 @@ jobs:
           echo "$FINAL_NDK_DIR" >> "$GITHUB_PATH"
           echo "NDK verified: $REQUESTED_NDK_VERSION -> $NDK_REVISION ($FINAL_NDK_DIR)"
 
+
+      - name: Resolve pre-build command
+        id: prebuild
+        shell: bash
+        env:
+          PRE_BUILD_COMMAND_INPUT: ${{ inputs.pre_build_command }}
+        run: |
+          set -euo pipefail
+
+          trim() {
+            local value="$1"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            printf '%s' "$value"
+          }
+
+          raw_command="$(trim "${PRE_BUILD_COMMAND_INPUT:-}")"
+          needed="false"
+          uses_go="false"
+          cache_path=""
+          mode="none"
+          command_value=""
+
+          case "$raw_command" in
+            ""|none|NONE|skip|SKIP)
+              mode="none"
+              ;;
+            auto|AUTO)
+              if [ -f ./run ] && [ -f libcore/build.sh ]; then
+                needed="true"
+                uses_go="true"
+                cache_path="app/libs/libcore.aar"
+                mode="auto-nekobox-libcore"
+                command_value="./run lib core"
+              else
+                mode="auto-none"
+              fi
+              ;;
+            *)
+              needed="true"
+              mode="manual"
+              command_value="$raw_command"
+              if [[ "$raw_command" == *go* ]] || [[ "$raw_command" == *gomobile* ]] || [[ "$raw_command" == *"./run lib core"* ]]; then
+                uses_go="true"
+              fi
+              ;;
+          esac
+
+          {
+            echo "needed=$needed"
+            echo "uses_go=$uses_go"
+            echo "cache_path=$cache_path"
+            echo "mode=$mode"
+            echo "command<<__PRE_BUILD_COMMAND__"
+            printf '%s\n' "$command_value"
+            echo "__PRE_BUILD_COMMAND__"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Pre-build mode: $mode"
+          echo "Pre-build needed: $needed"
+          if [ "$needed" = "true" ]; then
+            echo "Pre-build command: $command_value"
+            if [ -n "$cache_path" ]; then
+              echo "Pre-build output/cache path: $cache_path"
+            fi
+          fi
+
+      - name: Setup Go
+        if: ${{ steps.prebuild.outputs.uses_go == 'true' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go_version }}
+          cache: true
+
+      - name: Cache pre-build outputs
+        if: ${{ steps.prebuild.outputs.cache_path != '' }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.prebuild.outputs.cache_path }}
+          key: ${{ runner.os }}-${{ needs.setup-matrix.outputs.repository_name }}-${{ needs.setup-matrix.outputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
+
+      - name: Run pre-build command
+        if: ${{ steps.prebuild.outputs.needed == 'true' }}
+        shell: bash
+        env:
+          PRE_BUILD_COMMAND: ${{ steps.prebuild.outputs.command }}
+          PRE_BUILD_CACHE_PATH: ${{ steps.prebuild.outputs.cache_path }}
+          PRE_BUILD_MODE: ${{ steps.prebuild.outputs.mode }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$PRE_BUILD_CACHE_PATH" ] && [ -e "$PRE_BUILD_CACHE_PATH" ]; then
+            echo "Pre-build output already exists, skipping command: $PRE_BUILD_CACHE_PATH"
+            exit 0
+          fi
+
+          if [ "$PRE_BUILD_MODE" = "auto-nekobox-libcore" ]; then
+            chmod +x ./run libcore/*.sh buildScript/*.sh 2>/dev/null || true
+          fi
+
+          echo "Running pre-build command: $PRE_BUILD_COMMAND"
+          bash -eo pipefail -c "$PRE_BUILD_COMMAND"
+
+          if [ -n "$PRE_BUILD_CACHE_PATH" ] && [ ! -e "$PRE_BUILD_CACHE_PATH" ]; then
+            echo "::error::Pre-build command completed, but expected output was not found: $PRE_BUILD_CACHE_PATH"
+            exit 1
+          fi
+
       - name: Validate build target
         shell: bash
         env:
@@ -1020,7 +1252,7 @@ jobs:
           ./gradlew "${MATRIX_MODULE}:${MATRIX_GRADLE_TASK}" --no-daemon --stacktrace "${EXTRA_GRADLE_ARGS[@]}"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact_name }}
           path: |
