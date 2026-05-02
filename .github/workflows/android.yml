@@ -1,5 +1,5 @@
 name: Android CI
-run-name: "${{ inputs.repository || github.repository }} @ ${{ inputs.branch || 'main' }} • #${{ github.run_number }}"
+run-name: "${{ inputs.repository || github.repository }} @ ${{ inputs.branch || 'default branch' }} • #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
@@ -10,9 +10,9 @@ on:
         default: ''
 
       branch:
-        description: 'Target Branch'
-        required: true
-        default: 'main'
+        description: 'Target Branch / ref (leave empty to use the target repository default branch)'
+        required: false
+        default: ''
 
       module:
         description: 'Target Module(s), comma-separated'
@@ -78,15 +78,73 @@ jobs:
       repository: ${{ steps.meta.outputs.repository }}
       repository_name: ${{ steps.meta.outputs.repository_name }}
       version_name: ${{ steps.version.outputs.version_name }}
+      source_ref: ${{ steps.source.outputs.source_ref }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      source_short_sha: ${{ steps.source.outputs.source_short_sha }}
     steps:
-      - name: Checkout target repository
+      - name: Checkout target repository at requested ref
+        if: ${{ inputs.branch != '' }}
         uses: actions/checkout@v6
         with:
           repository: ${{ inputs.repository || github.repository }}
-          ref: ${{ inputs.branch || 'main' }}
+          ref: ${{ inputs.branch }}
           path: source
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
           submodules: recursive
+
+      - name: Checkout target repository at default branch
+        if: ${{ inputs.branch == '' }}
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          path: source
+          token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
+          submodules: recursive
+
+      - name: Diagnose checkout failure
+        if: ${{ failure() }}
+        shell: bash
+        env:
+          TARGET_REPOSITORY: ${{ inputs.repository || github.repository }}
+          TARGET_BRANCH: ${{ inputs.branch }}
+        run: |
+          echo "::error::Failed to checkout target repository '$TARGET_REPOSITORY'."
+          if [ -n "$TARGET_BRANCH" ]; then
+            echo "::error::Requested ref '$TARGET_BRANCH' could not be fetched. Check that the branch/tag/SHA exists and that CHECKOUT_TOKEN has read access."
+          else
+            echo "::error::The target repository default branch could not be fetched. Check that the repository exists and that CHECKOUT_TOKEN has read access."
+          fi
+          echo "For public repositories, the default github.token is usually enough."
+          echo "For private target repositories or private submodules, create a repository secret named CHECKOUT_TOKEN with read access to the target repository and its submodules."
+
+      - name: Resolve checked out source
+        id: source
+        shell: bash
+        working-directory: source
+        env:
+          REQUESTED_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+
+          SOURCE_SHA="$(git rev-parse HEAD)"
+          SOURCE_SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+          CURRENT_BRANCH="$(git branch --show-current || true)"
+          REMOTE_HEAD="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+
+          if [ -n "$CURRENT_BRANCH" ]; then
+            SOURCE_REF="$CURRENT_BRANCH"
+          elif [ -n "$REQUESTED_BRANCH" ]; then
+            SOURCE_REF="$REQUESTED_BRANCH"
+          elif [ -n "$REMOTE_HEAD" ]; then
+            SOURCE_REF="$REMOTE_HEAD"
+          else
+            SOURCE_REF="detached"
+          fi
+
+          echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          echo "source_short_sha=$SOURCE_SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "Checked out source: ref=$SOURCE_REF sha=$SOURCE_SHA"
 
       - name: Setup JDK
         uses: actions/setup-java@v5
@@ -487,7 +545,10 @@ jobs:
         env:
           RESOLVED_REPOSITORY: ${{ steps.meta.outputs.repository }}
           RESOLVED_REPOSITORY_NAME: ${{ steps.meta.outputs.repository_name }}
-          RESOLVED_BRANCH: ${{ inputs.branch || 'main' }}
+          REQUESTED_BRANCH: ${{ inputs.branch }}
+          RESOLVED_BRANCH: ${{ steps.source.outputs.source_ref }}
+          RESOLVED_SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          RESOLVED_SOURCE_SHORT_SHA: ${{ steps.source.outputs.source_short_sha }}
           RESOLVED_OS_VERSION: ${{ inputs.os_version }}
           RESOLVED_JDK_VERSION: ${{ inputs.jdk_version }}
           RESOLVED_NDK_VERSION: ${{ inputs.ndk_version }}
@@ -531,7 +592,9 @@ jobs:
           ]
           add_input_row(rows, "repository", value("RESOLVED_REPOSITORY"))
           add_input_row(rows, "repository_name", value("RESOLVED_REPOSITORY_NAME"))
-          add_input_row(rows, "branch", value("RESOLVED_BRANCH"))
+          add_input_row(rows, "branch_input", value("REQUESTED_BRANCH") or "(empty; target default branch)")
+          add_input_row(rows, "resolved_branch_or_ref", value("RESOLVED_BRANCH"))
+          add_input_row(rows, "source_sha", value("RESOLVED_SOURCE_SHA"))
           add_input_row(rows, "module", value("REQUESTED_MODULE"))
           add_input_row(rows, "build_flavor", value("REQUESTED_BUILD_FLAVOR"))
           add_input_row(rows, "build_type", value("REQUESTED_BUILD_TYPE"))
@@ -573,7 +636,9 @@ jobs:
 
           print("Resolved manual workflow inputs:")
           print(f"  repository: {value('RESOLVED_REPOSITORY')}")
-          print(f"  branch: {value('RESOLVED_BRANCH')}")
+          print(f"  branch input: {value('REQUESTED_BRANCH') or '(empty; target default branch)'}")
+          print(f"  resolved branch/ref: {value('RESOLVED_BRANCH')}")
+          print(f"  source sha: {value('RESOLVED_SOURCE_SHA')}")
           print(f"  module input: {value('REQUESTED_MODULE')}")
           print(f"  build_flavor input: {value('REQUESTED_BUILD_FLAVOR')}")
           print(f"  build_type input: {value('REQUESTED_BUILD_TYPE')}")
@@ -601,13 +666,24 @@ jobs:
     needs: setup-matrix
     runs-on: ${{ inputs.os_version }}
     steps:
-      - name: Checkout target repository
+      - name: Checkout resolved target source
         uses: actions/checkout@v6
         with:
           repository: ${{ needs.setup-matrix.outputs.repository }}
-          ref: ${{ inputs.branch || 'main' }}
+          ref: ${{ needs.setup-matrix.outputs.source_sha }}
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
           submodules: recursive
+
+      - name: Diagnose checkout failure
+        if: ${{ failure() }}
+        shell: bash
+        env:
+          TARGET_REPOSITORY: ${{ needs.setup-matrix.outputs.repository }}
+          SOURCE_REF: ${{ needs.setup-matrix.outputs.source_ref }}
+          SOURCE_SHA: ${{ needs.setup-matrix.outputs.source_sha }}
+        run: |
+          echo "::error::Failed to checkout '$TARGET_REPOSITORY' at '$SOURCE_REF' ($SOURCE_SHA)."
+          echo "Check that CHECKOUT_TOKEN has read access to the target repository and its recursive submodules."
 
       - name: Setup JDK
         uses: actions/setup-java@v5
@@ -759,13 +835,24 @@ jobs:
       matrix: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
 
     steps:
-      - name: Checkout target repository
+      - name: Checkout resolved target source
         uses: actions/checkout@v6
         with:
           repository: ${{ needs.setup-matrix.outputs.repository }}
-          ref: ${{ inputs.branch || 'main' }}
+          ref: ${{ needs.setup-matrix.outputs.source_sha }}
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
           submodules: recursive
+
+      - name: Diagnose checkout failure
+        if: ${{ failure() }}
+        shell: bash
+        env:
+          TARGET_REPOSITORY: ${{ needs.setup-matrix.outputs.repository }}
+          SOURCE_REF: ${{ needs.setup-matrix.outputs.source_ref }}
+          SOURCE_SHA: ${{ needs.setup-matrix.outputs.source_sha }}
+        run: |
+          echo "::error::Failed to checkout '$TARGET_REPOSITORY' at '$SOURCE_REF' ($SOURCE_SHA)."
+          echo "Check that CHECKOUT_TOKEN has read access to the target repository and its recursive submodules."
 
       - name: Setup JDK
         uses: actions/setup-java@v5
