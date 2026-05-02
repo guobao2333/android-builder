@@ -1,0 +1,473 @@
+name: Android Build CI
+run-name: "${{ inputs.repository || github.repository }} @ ${{ inputs.branch || 'main' }} • #${{ github.run_number }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: 'Target Repository（author/repo）'
+        required: false
+        default: ''
+
+      branch:
+        description: 'Target Branch'
+        required: false
+        default: 'main'
+
+      module:
+        description: 'Target Module(s), comma-separated; default app'
+        required: false
+        default: 'app'
+
+      build_flavor:
+        description: 'Build Flavor(s), comma-separated; optional'
+        required: false
+        default: ''
+
+      build_type:
+        description: 'Build Type'
+        required: true
+        default: 'debug'
+        type: choice
+        options: ['debug', 'release', 'aab', 'all']
+
+      build_options:
+        description: 'Build Options'
+        required: false
+        default: ''
+
+      build_test:
+        description: 'Full Build Test'
+        default: false
+        type: boolean
+
+      upload_release:
+        description: 'Upload GitHub Release'
+        default: false
+        type: boolean
+
+      os_version:
+        description: 'OS Version'
+        required: true
+        default: 'ubuntu-latest'
+        type: choice
+        options: ['ubuntu-latest', 'ubuntu-22.04']
+
+      jdk_version:
+        description: 'JDK Version'
+        required: true
+        default: '17'
+        type: choice
+        options: ['25', '24', '23', '22', '21', '17', '11', '8']
+
+      ndk_version:
+        description: 'NDK Version'
+        required: true
+        default: 'r27d'
+        type: choice
+        options: ['r29', 'r28c', 'r27d', 'r26d', 'r25c', 'r24', 'r23c', 'r22b', 'r21e', 'r20b']
+
+permissions:
+  contents: write
+
+jobs:
+  setup-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.meta.outputs.matrix }}
+      repository: ${{ steps.meta.outputs.repository }}
+      repository_name: ${{ steps.meta.outputs.repository_name }}
+      version_name: ${{ steps.version.outputs.version_name }}
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.branch || 'main' }}
+          path: source
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ inputs.jdk_version }}
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ inputs.ndk_version }}
+          add-to-path: true
+          link-to-sdk: true
+          local-cache: true
+
+      - name: Resolve version name
+        id: version
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+
+          VERSION_NAME=""
+          if [ -f gradle.properties ]; then
+            VERSION_NAME="$(grep -E '^[[:space:]]*(versionName|VERSION_NAME|version)[[:space:]]*=' gradle.properties | head -n1 | cut -d= -f2- | tr -d '[:space:]' || true)"
+          fi
+
+          if [ -z "$VERSION_NAME" ]; then
+            VERSION_NAME="${GITHUB_RUN_NUMBER}"
+          fi
+
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION_NAME"
+
+      - name: Prepare build metadata and matrix
+        id: meta
+        shell: bash
+        working-directory: source
+        env:
+          INPUT_REPOSITORY: ${{ inputs.repository }}
+          INPUT_MODULE: ${{ inputs.module }}
+          INPUT_BUILD_FLAVOR: ${{ inputs.build_flavor }}
+          INPUT_BUILD_TYPE: ${{ inputs.build_type }}
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          def canonical_module(raw: str) -> str:
+              raw = raw.strip()
+              if not raw:
+                  return ""
+              if not raw.startswith(":"):
+                  raw = ":" + raw
+              return re.sub(r":+", ":", raw)
+
+          def module_dir(module: str) -> str:
+              return module.lstrip(":").replace(":", "/")
+
+          def normalize_key(text: str) -> str:
+              return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+          def slug(text: str, default: str) -> str:
+              value = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+              return value or default
+
+          def parse_csv(value: str) -> list[str]:
+              return [item.strip() for item in value.split(",") if item.strip()] if value else []
+
+          def run_gradle(*args: str) -> str:
+              cmd = ["./gradlew", "--no-daemon", "--console=plain", *args]
+              proc = subprocess.run(
+                  cmd,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  text=True,
+                  check=False,
+              )
+              if proc.returncode != 0:
+                  print(proc.stdout, file=sys.stderr)
+                  sys.exit(proc.returncode)
+              return proc.stdout
+
+          def available_modules() -> list[str]:
+              out = run_gradle("projects", "--all")
+              modules: list[str] = []
+              for line in out.splitlines():
+                  match = re.search(r"Project '(:[^']+)'", line)
+                  if not match:
+                      continue
+                  module = canonical_module(match.group(1))
+                  if module != ":" and module not in modules:
+                      modules.append(module)
+              return modules
+
+          task_cache: dict[str, list[str]] = {}
+
+          def collect_tasks(module: str) -> list[str]:
+              module = canonical_module(module)
+              if module in task_cache:
+                  return task_cache[module]
+
+              out = run_gradle(f"{module}:tasks", "--all")
+              tasks: list[str] = []
+              task_re = re.compile(r"^\s*((?:assemble|bundle|install)[A-Za-z0-9]+)\b")
+              for line in out.splitlines():
+                  match = task_re.match(line)
+                  if not match:
+                      continue
+                  task = match.group(1)
+                  if task not in tasks:
+                      tasks.append(task)
+
+              task_cache[module] = tasks
+              return tasks
+
+          def is_installable_app(tasks: list[str]) -> bool:
+              return any(task.startswith("install") for task in tasks) or any(
+                  task.startswith("bundle") and not task.endswith("Aar") for task in tasks
+              )
+
+          def variant_from_task(task: str) -> tuple[str, str] | None:
+              match = re.match(r"^(assemble|bundle)([A-Z][A-Za-z0-9]*)?(Debug|Release)$", task)
+              if not match:
+                  return None
+              prefix, flavor, suffix = match.groups()
+              build_type = suffix.lower()
+              if prefix == "bundle" and build_type != "release":
+                  return None
+              return flavor or "", build_type
+
+          def format_error(message: str) -> None:
+              print(f"::error::{message}", file=sys.stderr)
+              sys.exit(1)
+
+          repository = os.environ.get("INPUT_REPOSITORY", "").strip() or os.environ.get("GITHUB_REPOSITORY", "").strip()
+          repo_name = repository.rsplit("/", 1)[-1]
+          module_input = os.environ.get("INPUT_MODULE", "").strip()
+          build_flavor_input = os.environ.get("INPUT_BUILD_FLAVOR", "").strip()
+          build_type_input = os.environ.get("INPUT_BUILD_TYPE", "").strip()
+          date_long = os.environ.get("DATE_LONG", "").strip()
+          version_name = os.environ.get("VERSION_NAME", "").strip() or os.environ.get("GITHUB_RUN_NUMBER", "0").strip()
+
+          if build_type_input not in {"debug", "release", "aab", "all"}:
+              format_error(f"Unsupported build_type: {build_type_input}")
+
+          requested_flavors = [normalize_key(item) for item in parse_csv(build_flavor_input)]
+          all_modules = available_modules()
+          if not all_modules:
+              format_error("No Gradle subprojects were found. Ensure the target repository contains an Android project.")
+
+          if module_input:
+              candidate_modules = []
+              unknown_modules = []
+              for item in parse_csv(module_input):
+                  module = canonical_module(item)
+                  if module not in all_modules:
+                      unknown_modules.append(module or item)
+                  else:
+                      candidate_modules.append(module)
+              if unknown_modules:
+                  format_error(
+                      "Unknown module(s): " + ", ".join(sorted(set(unknown_modules)))
+                      + ". Available subprojects: " + ", ".join(all_modules)
+                  )
+          else:
+              candidate_modules = [module for module in all_modules if is_installable_app(collect_tasks(module))]
+
+          if not candidate_modules:
+              if module_input:
+                  format_error(
+                      "No valid modules remain after filtering. Check the module input and the target branch."
+                  )
+              format_error(
+                  "No installable Android application modules were found. Specify the module input explicitly if the project layout is unusual."
+              )
+
+          matrix_entries: list[dict[str, str]] = []
+          module_errors: list[str] = []
+          seen: set[tuple[str, str, str]] = set()
+
+          for module in candidate_modules:
+              tasks = collect_tasks(module)
+              if not is_installable_app(tasks):
+                  if module_input:
+                      format_error(
+                          f"Module '{module}' does not expose installable Android tasks. Expected app-style bundle/install tasks, but only library-style tasks were found."
+                      )
+                  continue
+
+              module_dir_value = module_dir(module)
+              module_safe = slug(module_dir_value.replace("/", "-"), "module")
+
+              module_items: list[dict[str, str]] = []
+              for task in tasks:
+                  parsed = variant_from_task(task)
+                  if not parsed:
+                      continue
+                  flavor, build_type = parsed
+
+                  if build_type_input != "all" and build_type != build_type_input:
+                      continue
+
+                  if requested_flavors:
+                      if not flavor:
+                          continue
+                      flavor_key = normalize_key(flavor)
+                      if not any(token in flavor_key for token in requested_flavors):
+                          continue
+
+                  flavor_safe = slug(flavor, "") if flavor else ""
+                  if flavor:
+                      artifact_name = f"{repo_name}-{module_safe}-{flavor_safe}-{build_type}-{date_long}"
+                  else:
+                      artifact_name = f"{repo_name}-{module_safe}-{build_type}-{date_long}"
+
+                  key = (module, flavor, build_type)
+                  if key in seen:
+                      continue
+                  seen.add(key)
+
+                  gradle_task = task
+
+                  module_items.append(
+                      {
+                          "module": module,
+                          "module_dir": module_dir_value,
+                          "module_safe": module_safe,
+                          "flavor": flavor,
+                          "flavor_safe": flavor_safe,
+                          "build_type": build_type,
+                          "gradle_task": gradle_task,
+                          "artifact_name": artifact_name,
+                      }
+                  )
+
+              if not module_items:
+                  detail = []
+                  if build_type_input != "all":
+                      detail.append(f"build_type='{build_type_input}'")
+                  if build_flavor_input:
+                      detail.append(f"build_flavor='{build_flavor_input}'")
+                  filter_desc = " and ".join(detail) if detail else "current filters"
+                  message = (
+                      f"Module '{module}' has no build variants matching {filter_desc}. "
+                      f"Available tasks: {', '.join(tasks) if tasks else 'none'}"
+                  )
+                  if module_input:
+                      format_error(message)
+                  module_errors.append(message)
+                  continue
+
+              matrix_entries.extend(module_items)
+
+          if not matrix_entries:
+              if module_errors:
+                  format_error("; ".join(module_errors))
+              format_error("No build variants matched the current filters.")
+
+          matrix = {"include": matrix_entries}
+          print(f"repository={repository}")
+          print(f"repository_name={repo_name}")
+          print(f"matrix={json.dumps(matrix, ensure_ascii=False)}")
+          PY
+
+  test:
+    if: ${{ inputs.build_test }}
+    needs: setup-matrix
+    runs-on: ${{ inputs.os_version }}
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ needs.setup-matrix.outputs.repository }}
+          ref: ${{ inputs.branch || 'main' }}
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ inputs.jdk_version }}
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ inputs.ndk_version }}
+          add-to-path: true
+          link-to-sdk: true
+          local-cache: true
+
+      - name: Run gradle tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew build --no-daemon --stacktrace ${{ inputs.build_options }}
+
+  build:
+    needs: setup-matrix
+    runs-on: ${{ inputs.os_version }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup-matrix.outputs.matrix) }}
+
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ needs.setup-matrix.outputs.repository }}
+          ref: ${{ inputs.branch || 'main' }}
+
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ inputs.jdk_version }}
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Setup NDK
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: ${{ inputs.ndk_version }}
+          add-to-path: true
+          link-to-sdk: true
+          local-cache: true
+
+      - name: Validate build target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z '${{ matrix.module }}' ]; then
+            echo '::error::Matrix entry missing module.'
+            exit 1
+          fi
+          if [ -z '${{ matrix.gradle_task }}' ]; then
+            echo '::error::Matrix entry missing gradle_task.'
+            exit 1
+          fi
+          if [ ! -d '${{ matrix.module_dir }}' ]; then
+            echo '::error::Module directory not found: ${{ matrix.module_dir }}'
+            exit 1
+          fi
+
+      - name: Build project
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew ":${{ matrix.module }}:${{ matrix.gradle_task }}" --no-daemon --stacktrace ${{ inputs.build_options }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            ${{ matrix.module_dir }}/build/outputs/**/*.apk
+            ${{ matrix.module_dir }}/build/outputs/**/*.aab
+          if-no-files-found: error
+
+  release:
+    if: ${{ inputs.upload_release == true }}
+    needs: [setup-matrix, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          pattern: ${{ needs.setup-matrix.outputs.repository_name }}-*
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.setup-matrix.outputs.version_name }}
+          name: ${{ needs.setup-matrix.outputs.repository_name }} v${{ needs.setup-matrix.outputs.version_name }}
+          files: release-assets/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
