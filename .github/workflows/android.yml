@@ -32,7 +32,7 @@ on:
         options: ['debug', 'release', 'aab', 'all']
 
       build_options:
-        description: 'Build Options'
+        description: 'Extra Gradle args (shell-style string or JSON array)'
         required: false
         default: ''
 
@@ -80,6 +80,10 @@ on:
 permissions:
   contents: read
 
+env:
+  CI_WORKFLOW_CHECKOUT_PATH: .android-ci-workflow
+  CI_HELPERS_RELATIVE_PATH: .github/scripts/android-ci
+
 jobs:
   setup-matrix:
     runs-on: ubuntu-latest
@@ -87,11 +91,21 @@ jobs:
       matrix: ${{ steps.meta.outputs.matrix }}
       repository: ${{ steps.meta.outputs.repository }}
       repository_name: ${{ steps.meta.outputs.repository_name }}
+      build_options_json: ${{ steps.build_options.outputs.build_options_json }}
+      build_options_display: ${{ steps.build_options.outputs.build_options_display }}
       version_name: ${{ steps.version.outputs.version_name }}
       source_ref: ${{ steps.source.outputs.source_ref }}
       source_sha: ${{ steps.source.outputs.source_sha }}
       source_short_sha: ${{ steps.source.outputs.source_short_sha }}
     steps:
+      - name: Checkout workflow helper scripts
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: ${{ env.CI_WORKFLOW_CHECKOUT_PATH }}
+          persist-credentials: false
+
       - name: Checkout target repository at requested ref
         if: ${{ inputs.branch != '' }}
         uses: actions/checkout@v6
@@ -174,132 +188,12 @@ jobs:
       - name: Verify NDK toolchain
         shell: bash
         env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
         run: |
           set -euo pipefail
+          bash "$CI_HELPERS_DIR/verify-ndk.sh"
 
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          TOOLCHAIN_REL="toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
-
-          resolve_ndk_revision() {
-            case "$1" in
-              r29|29.0.14033849) echo "29.0.14033849" ;;
-              r28c|28.2.13676358) echo "28.2.13676358" ;;
-              r27d|27.3.13750724) echo "27.3.13750724" ;;
-              r26d|26.3.11579264) echo "26.3.11579264" ;;
-              r25c|25.2.9519653) echo "25.2.9519653" ;;
-              r24|24.0.8215888) echo "24.0.8215888" ;;
-              r23c|23.2.8568313) echo "23.2.8568313" ;;
-              r22b|22.1.7171670) echo "22.1.7171670" ;;
-              r21e|21.4.7075529) echo "21.4.7075529" ;;
-              r20b|20.1.5948944) echo "20.1.5948944" ;;
-              [0-9]*.[0-9]*.[0-9]*) echo "$1" ;;
-              *)
-                echo "::error::Unable to map NDK version '$1' to a full SDK revision."
-                exit 1
-                ;;
-            esac
-          }
-
-          read_ndk_revision() {
-            local dir="$1"
-            if [ -f "$dir/source.properties" ]; then
-              awk -F'= *' '/^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$dir/source.properties"
-            fi
-          }
-
-          has_llvm_strip() {
-            local dir="${1:-}"
-            [ -n "$dir" ] && [ -x "$dir/$TOOLCHAIN_REL" ]
-          }
-
-          is_requested_revision() {
-            local dir="${1:-}"
-            local revision=""
-            [ -n "$dir" ] || return 1
-            [ -d "$dir" ] || return 1
-            revision="$(read_ndk_revision "$dir" || true)"
-            [ "$revision" = "$REQUESTED_NDK_REVISION" ]
-          }
-
-          find_complete_requested_ndk() {
-            local candidate
-            for candidate in \
-              "$CANONICAL_NDK_DIR" \
-              "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION" \
-              "$HOME/.setup-ndk/$REQUESTED_NDK_REVISION" \
-              "${ANDROID_NDK_HOME:-}" \
-              "${ANDROID_NDK_ROOT:-}" \
-              "$SDK_ROOT/ndk"/*; do
-              [ -n "$candidate" ] || continue
-              [ -d "$candidate" ] || continue
-              is_requested_revision "$candidate" || continue
-              has_llvm_strip "$candidate" || continue
-              echo "$candidate"
-              return 0
-            done
-            return 1
-          }
-
-          install_requested_ndk() {
-            local sdkmanager
-            sdkmanager="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-            if [ ! -x "$sdkmanager" ]; then
-              sdkmanager="$(command -v sdkmanager || true)"
-            fi
-            if [ -z "$sdkmanager" ]; then
-              echo "::error::sdkmanager was not found; cannot install ndk;$REQUESTED_NDK_REVISION."
-              exit 1
-            fi
-
-            echo "Installing ndk;$REQUESTED_NDK_REVISION with sdkmanager."
-            rm -rf "$CANONICAL_NDK_DIR"
-
-            set +o pipefail
-            yes | "$sdkmanager" --licenses >/dev/null
-            license_status=${PIPESTATUS[1]}
-            yes | "$sdkmanager" --install "ndk;$REQUESTED_NDK_REVISION"
-            install_status=${PIPESTATUS[1]}
-            set -o pipefail
-
-            if [ "$license_status" -ne 0 ]; then
-              echo "::warning::sdkmanager --licenses exited with status $license_status; continuing because licenses may already be accepted."
-            fi
-            if [ "$install_status" -ne 0 ]; then
-              echo "::error::sdkmanager failed to install ndk;$REQUESTED_NDK_REVISION with status $install_status."
-              exit "$install_status"
-            fi
-          }
-
-          REQUESTED_NDK_REVISION="$(resolve_ndk_revision "$REQUESTED_NDK_VERSION")"
-          CANONICAL_NDK_DIR="$SDK_ROOT/ndk/$REQUESTED_NDK_REVISION"
-          mkdir -p "$SDK_ROOT/ndk"
-
-          COMPLETE_NDK_DIR="$(find_complete_requested_ndk || true)"
-
-          if [ -n "$COMPLETE_NDK_DIR" ] && [ "$COMPLETE_NDK_DIR" != "$CANONICAL_NDK_DIR" ]; then
-            echo "Found complete requested NDK at $COMPLETE_NDK_DIR; linking it to $CANONICAL_NDK_DIR for Gradle ndkVersion resolution."
-            rm -rf "$CANONICAL_NDK_DIR"
-            ln -s "$COMPLETE_NDK_DIR" "$CANONICAL_NDK_DIR"
-          fi
-
-          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
-            echo "::warning::Canonical NDK is missing or incomplete: $CANONICAL_NDK_DIR"
-            install_requested_ndk
-          fi
-
-          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
-            echo "::error::NDK installation is incomplete after repair: missing $CANONICAL_NDK_DIR/$TOOLCHAIN_REL or source.properties revision is not $REQUESTED_NDK_REVISION."
-            echo "Detected SDK NDK directories:"
-            find "$SDK_ROOT/ndk" -maxdepth 2 -name source.properties -print -exec awk -F'= *' '/^Pkg.Revision/ {print "  " FILENAME ": " $2}' {} \; 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "ANDROID_NDK_HOME=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "$CANONICAL_NDK_DIR" >> "$GITHUB_PATH"
-          echo "$CANONICAL_NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-          echo "NDK verified: $REQUESTED_NDK_VERSION -> $REQUESTED_NDK_REVISION ($CANONICAL_NDK_DIR)"
       - name: Resolve version name
         id: version
         shell: bash
@@ -565,6 +459,26 @@ jobs:
           print(f"matrix={json.dumps(matrix, ensure_ascii=False)}")
           PY
 
+      - name: Normalize build options
+        id: build_options
+        shell: bash
+        env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          BUILD_OPTIONS: ${{ inputs.build_options }}
+        run: |
+          set -euo pipefail
+          build_options_json="$(python3 "$CI_HELPERS_DIR/parse-gradle-options.py" --format json)"
+          build_options_display="$(python3 "$CI_HELPERS_DIR/parse-gradle-options.py" --format display)"
+          {
+            echo "build_options_json=$build_options_json"
+            echo "build_options_display=$build_options_display"
+          } >> "$GITHUB_OUTPUT"
+          if [ -n "$build_options_display" ]; then
+            echo "Normalized build options: $build_options_display"
+          else
+            echo "Normalized build options: (none)"
+          fi
+
       - name: Print resolved workflow inputs
         shell: bash
         env:
@@ -580,6 +494,8 @@ jobs:
           RESOLVED_BUILD_TEST: ${{ inputs.build_test }}
           RESOLVED_UPLOAD_RELEASE: ${{ inputs.upload_release }}
           RESOLVED_BUILD_OPTIONS: ${{ inputs.build_options }}
+          NORMALIZED_BUILD_OPTIONS: ${{ steps.build_options.outputs.build_options_display }}
+          RESOLVED_BUILD_OPTIONS_JSON: ${{ steps.build_options.outputs.build_options_json }}
           RESOLVED_PRE_BUILD_COMMAND: ${{ inputs.pre_build_command }}
           RESOLVED_GO_VERSION: ${{ inputs.go_version }}
           REQUESTED_MODULE: ${{ inputs.module }}
@@ -640,6 +556,8 @@ jobs:
           add_input_row(rows, "build_flavor", value("REQUESTED_BUILD_FLAVOR"))
           add_input_row(rows, "build_type", value("REQUESTED_BUILD_TYPE"))
           add_input_row(rows, "build_options", value("RESOLVED_BUILD_OPTIONS"))
+          add_input_row(rows, "normalized_build_options", value("NORMALIZED_BUILD_OPTIONS") or "(none)")
+          add_input_row(rows, "build_options_json", value("RESOLVED_BUILD_OPTIONS_JSON") or "[]")
           add_input_row(rows, "pre_build_command", value("RESOLVED_PRE_BUILD_COMMAND"))
           add_input_row(rows, "go_version", value("RESOLVED_GO_VERSION"))
           add_input_row(rows, "build_test", value("RESOLVED_BUILD_TEST"))
@@ -688,6 +606,8 @@ jobs:
           print(f"  build_flavor input: {value('REQUESTED_BUILD_FLAVOR')}")
           print(f"  build_type input: {value('REQUESTED_BUILD_TYPE')}")
           print(f"  build_options: {value('RESOLVED_BUILD_OPTIONS')}")
+          print(f"  normalized build_options: {value('NORMALIZED_BUILD_OPTIONS') or '(none)'}")
+          print(f"  build_options_json: {value('RESOLVED_BUILD_OPTIONS_JSON') or '[]'}")
           print(f"  pre_build_command: {value('RESOLVED_PRE_BUILD_COMMAND')}")
           print(f"  go_version: {value('RESOLVED_GO_VERSION')}")
           print(f"  build_test: {value('RESOLVED_BUILD_TEST')}")
@@ -734,6 +654,14 @@ jobs:
           echo "::error::Failed to checkout '$TARGET_REPOSITORY' at '$SOURCE_REF' ($SOURCE_SHA)."
           echo "Check that CHECKOUT_TOKEN has read access to the target repository and its recursive submodules."
 
+      - name: Checkout workflow helper scripts
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: ${{ env.CI_WORKFLOW_CHECKOUT_PATH }}
+          persist-credentials: false
+
       - name: Setup JDK
         uses: actions/setup-java@v5
         with:
@@ -752,197 +680,21 @@ jobs:
       - name: Verify NDK toolchain
         shell: bash
         env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
         run: |
           set -euo pipefail
+          bash "$CI_HELPERS_DIR/verify-ndk.sh"
 
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          TOOLCHAIN_REL="toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
-
-          resolve_ndk_revision() {
-            case "$1" in
-              r29|29.0.14033849) echo "29.0.14033849" ;;
-              r28c|28.2.13676358) echo "28.2.13676358" ;;
-              r27d|27.3.13750724) echo "27.3.13750724" ;;
-              r26d|26.3.11579264) echo "26.3.11579264" ;;
-              r25c|25.2.9519653) echo "25.2.9519653" ;;
-              r24|24.0.8215888) echo "24.0.8215888" ;;
-              r23c|23.2.8568313) echo "23.2.8568313" ;;
-              r22b|22.1.7171670) echo "22.1.7171670" ;;
-              r21e|21.4.7075529) echo "21.4.7075529" ;;
-              r20b|20.1.5948944) echo "20.1.5948944" ;;
-              [0-9]*.[0-9]*.[0-9]*) echo "$1" ;;
-              *)
-                echo "::error::Unable to map NDK version '$1' to a full SDK revision."
-                exit 1
-                ;;
-            esac
-          }
-
-          read_ndk_revision() {
-            local dir="$1"
-            if [ -f "$dir/source.properties" ]; then
-              awk -F'= *' '/^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$dir/source.properties"
-            fi
-          }
-
-          has_llvm_strip() {
-            local dir="${1:-}"
-            [ -n "$dir" ] && [ -x "$dir/$TOOLCHAIN_REL" ]
-          }
-
-          is_requested_revision() {
-            local dir="${1:-}"
-            local revision=""
-            [ -n "$dir" ] || return 1
-            [ -d "$dir" ] || return 1
-            revision="$(read_ndk_revision "$dir" || true)"
-            [ "$revision" = "$REQUESTED_NDK_REVISION" ]
-          }
-
-          find_complete_requested_ndk() {
-            local candidate
-            for candidate in \
-              "$CANONICAL_NDK_DIR" \
-              "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION" \
-              "$HOME/.setup-ndk/$REQUESTED_NDK_REVISION" \
-              "${ANDROID_NDK_HOME:-}" \
-              "${ANDROID_NDK_ROOT:-}" \
-              "$SDK_ROOT/ndk"/*; do
-              [ -n "$candidate" ] || continue
-              [ -d "$candidate" ] || continue
-              is_requested_revision "$candidate" || continue
-              has_llvm_strip "$candidate" || continue
-              echo "$candidate"
-              return 0
-            done
-            return 1
-          }
-
-          install_requested_ndk() {
-            local sdkmanager
-            sdkmanager="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-            if [ ! -x "$sdkmanager" ]; then
-              sdkmanager="$(command -v sdkmanager || true)"
-            fi
-            if [ -z "$sdkmanager" ]; then
-              echo "::error::sdkmanager was not found; cannot install ndk;$REQUESTED_NDK_REVISION."
-              exit 1
-            fi
-
-            echo "Installing ndk;$REQUESTED_NDK_REVISION with sdkmanager."
-            rm -rf "$CANONICAL_NDK_DIR"
-
-            set +o pipefail
-            yes | "$sdkmanager" --licenses >/dev/null
-            license_status=${PIPESTATUS[1]}
-            yes | "$sdkmanager" --install "ndk;$REQUESTED_NDK_REVISION"
-            install_status=${PIPESTATUS[1]}
-            set -o pipefail
-
-            if [ "$license_status" -ne 0 ]; then
-              echo "::warning::sdkmanager --licenses exited with status $license_status; continuing because licenses may already be accepted."
-            fi
-            if [ "$install_status" -ne 0 ]; then
-              echo "::error::sdkmanager failed to install ndk;$REQUESTED_NDK_REVISION with status $install_status."
-              exit "$install_status"
-            fi
-          }
-
-          REQUESTED_NDK_REVISION="$(resolve_ndk_revision "$REQUESTED_NDK_VERSION")"
-          CANONICAL_NDK_DIR="$SDK_ROOT/ndk/$REQUESTED_NDK_REVISION"
-          mkdir -p "$SDK_ROOT/ndk"
-
-          COMPLETE_NDK_DIR="$(find_complete_requested_ndk || true)"
-
-          if [ -n "$COMPLETE_NDK_DIR" ] && [ "$COMPLETE_NDK_DIR" != "$CANONICAL_NDK_DIR" ]; then
-            echo "Found complete requested NDK at $COMPLETE_NDK_DIR; linking it to $CANONICAL_NDK_DIR for Gradle ndkVersion resolution."
-            rm -rf "$CANONICAL_NDK_DIR"
-            ln -s "$COMPLETE_NDK_DIR" "$CANONICAL_NDK_DIR"
-          fi
-
-          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
-            echo "::warning::Canonical NDK is missing or incomplete: $CANONICAL_NDK_DIR"
-            install_requested_ndk
-          fi
-
-          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
-            echo "::error::NDK installation is incomplete after repair: missing $CANONICAL_NDK_DIR/$TOOLCHAIN_REL or source.properties revision is not $REQUESTED_NDK_REVISION."
-            echo "Detected SDK NDK directories:"
-            find "$SDK_ROOT/ndk" -maxdepth 2 -name source.properties -print -exec awk -F'= *' '/^Pkg.Revision/ {print "  " FILENAME ": " $2}' {} \; 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "ANDROID_NDK_HOME=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "$CANONICAL_NDK_DIR" >> "$GITHUB_PATH"
-          echo "$CANONICAL_NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-          echo "NDK verified: $REQUESTED_NDK_VERSION -> $REQUESTED_NDK_REVISION ($CANONICAL_NDK_DIR)"
       - name: Resolve pre-build command
         id: prebuild
         shell: bash
         env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           PRE_BUILD_COMMAND_INPUT: ${{ inputs.pre_build_command }}
         run: |
           set -euo pipefail
-
-          trim() {
-            local value="$1"
-            value="${value#"${value%%[![:space:]]*}"}"
-            value="${value%"${value##*[![:space:]]}"}"
-            printf '%s' "$value"
-          }
-
-          raw_command="$(trim "${PRE_BUILD_COMMAND_INPUT:-}")"
-          needed="false"
-          uses_go="false"
-          cache_path=""
-          mode="none"
-          command_value=""
-
-          case "$raw_command" in
-            ""|none|NONE|skip|SKIP)
-              mode="none"
-              ;;
-            auto|AUTO)
-              if [ -f ./run ] && [ -f libcore/build.sh ]; then
-                needed="true"
-                uses_go="true"
-                cache_path="app/libs/libcore.aar"
-                mode="auto-nekobox-libcore"
-                command_value="./run lib core"
-              else
-                mode="auto-none"
-              fi
-              ;;
-            *)
-              needed="true"
-              mode="manual"
-              command_value="$raw_command"
-              if [[ "$raw_command" == *go* ]] || [[ "$raw_command" == *gomobile* ]] || [[ "$raw_command" == *"./run lib core"* ]]; then
-                uses_go="true"
-              fi
-              ;;
-          esac
-
-          {
-            echo "needed=$needed"
-            echo "uses_go=$uses_go"
-            echo "cache_path=$cache_path"
-            echo "mode=$mode"
-            echo "command<<__PRE_BUILD_COMMAND__"
-            printf '%s\n' "$command_value"
-            echo "__PRE_BUILD_COMMAND__"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Pre-build mode: $mode"
-          echo "Pre-build needed: $needed"
-          if [ "$needed" = "true" ]; then
-            echo "Pre-build command: $command_value"
-            if [ -n "$cache_path" ]; then
-              echo "Pre-build output/cache path: $cache_path"
-            fi
-          fi
+          python3 "$CI_HELPERS_DIR/resolve-prebuild.py"
 
       - name: Setup Go
         if: ${{ steps.prebuild.outputs.uses_go == 'true' }}
@@ -962,41 +714,23 @@ jobs:
         if: ${{ steps.prebuild.outputs.needed == 'true' }}
         shell: bash
         env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           PRE_BUILD_COMMAND: ${{ steps.prebuild.outputs.command }}
           PRE_BUILD_CACHE_PATH: ${{ steps.prebuild.outputs.cache_path }}
           PRE_BUILD_MODE: ${{ steps.prebuild.outputs.mode }}
         run: |
           set -euo pipefail
-
-          if [ -n "$PRE_BUILD_CACHE_PATH" ] && [ -e "$PRE_BUILD_CACHE_PATH" ]; then
-            echo "Pre-build output already exists, skipping command: $PRE_BUILD_CACHE_PATH"
-            exit 0
-          fi
-
-          if [ "$PRE_BUILD_MODE" = "auto-nekobox-libcore" ]; then
-            chmod +x ./run libcore/*.sh buildScript/*.sh 2>/dev/null || true
-          fi
-
-          echo "Running pre-build command: $PRE_BUILD_COMMAND"
-          bash -eo pipefail -c "$PRE_BUILD_COMMAND"
-
-          if [ -n "$PRE_BUILD_CACHE_PATH" ] && [ ! -e "$PRE_BUILD_CACHE_PATH" ]; then
-            echo "::error::Pre-build command completed, but expected output was not found: $PRE_BUILD_CACHE_PATH"
-            exit 1
-          fi
+          bash "$CI_HELPERS_DIR/run-prebuild.sh"
 
       - name: Run gradle tests
         shell: bash
         env:
-          BUILD_OPTIONS: ${{ inputs.build_options }}
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          BUILD_OPTIONS_JSON: ${{ needs.setup-matrix.outputs.build_options_json }}
+          GRADLE_TASK: build
         run: |
           set -euo pipefail
-          chmod +x ./gradlew
-          EXTRA_GRADLE_ARGS=()
-          if [ -n "$BUILD_OPTIONS" ]; then
-            read -r -a EXTRA_GRADLE_ARGS <<< "$BUILD_OPTIONS"
-          fi
-          ./gradlew build --no-daemon --stacktrace "${EXTRA_GRADLE_ARGS[@]}"
+          bash "$CI_HELPERS_DIR/run-gradle.sh"
 
   build:
     needs: setup-matrix
@@ -1025,6 +759,14 @@ jobs:
           echo "::error::Failed to checkout '$TARGET_REPOSITORY' at '$SOURCE_REF' ($SOURCE_SHA)."
           echo "Check that CHECKOUT_TOKEN has read access to the target repository and its recursive submodules."
 
+      - name: Checkout workflow helper scripts
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: ${{ env.CI_WORKFLOW_CHECKOUT_PATH }}
+          persist-credentials: false
+
       - name: Setup JDK
         uses: actions/setup-java@v5
         with:
@@ -1043,197 +785,21 @@ jobs:
       - name: Verify NDK toolchain
         shell: bash
         env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
         run: |
           set -euo pipefail
+          bash "$CI_HELPERS_DIR/verify-ndk.sh"
 
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          TOOLCHAIN_REL="toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
-
-          resolve_ndk_revision() {
-            case "$1" in
-              r29|29.0.14033849) echo "29.0.14033849" ;;
-              r28c|28.2.13676358) echo "28.2.13676358" ;;
-              r27d|27.3.13750724) echo "27.3.13750724" ;;
-              r26d|26.3.11579264) echo "26.3.11579264" ;;
-              r25c|25.2.9519653) echo "25.2.9519653" ;;
-              r24|24.0.8215888) echo "24.0.8215888" ;;
-              r23c|23.2.8568313) echo "23.2.8568313" ;;
-              r22b|22.1.7171670) echo "22.1.7171670" ;;
-              r21e|21.4.7075529) echo "21.4.7075529" ;;
-              r20b|20.1.5948944) echo "20.1.5948944" ;;
-              [0-9]*.[0-9]*.[0-9]*) echo "$1" ;;
-              *)
-                echo "::error::Unable to map NDK version '$1' to a full SDK revision."
-                exit 1
-                ;;
-            esac
-          }
-
-          read_ndk_revision() {
-            local dir="$1"
-            if [ -f "$dir/source.properties" ]; then
-              awk -F'= *' '/^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$dir/source.properties"
-            fi
-          }
-
-          has_llvm_strip() {
-            local dir="${1:-}"
-            [ -n "$dir" ] && [ -x "$dir/$TOOLCHAIN_REL" ]
-          }
-
-          is_requested_revision() {
-            local dir="${1:-}"
-            local revision=""
-            [ -n "$dir" ] || return 1
-            [ -d "$dir" ] || return 1
-            revision="$(read_ndk_revision "$dir" || true)"
-            [ "$revision" = "$REQUESTED_NDK_REVISION" ]
-          }
-
-          find_complete_requested_ndk() {
-            local candidate
-            for candidate in \
-              "$CANONICAL_NDK_DIR" \
-              "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION" \
-              "$HOME/.setup-ndk/$REQUESTED_NDK_REVISION" \
-              "${ANDROID_NDK_HOME:-}" \
-              "${ANDROID_NDK_ROOT:-}" \
-              "$SDK_ROOT/ndk"/*; do
-              [ -n "$candidate" ] || continue
-              [ -d "$candidate" ] || continue
-              is_requested_revision "$candidate" || continue
-              has_llvm_strip "$candidate" || continue
-              echo "$candidate"
-              return 0
-            done
-            return 1
-          }
-
-          install_requested_ndk() {
-            local sdkmanager
-            sdkmanager="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-            if [ ! -x "$sdkmanager" ]; then
-              sdkmanager="$(command -v sdkmanager || true)"
-            fi
-            if [ -z "$sdkmanager" ]; then
-              echo "::error::sdkmanager was not found; cannot install ndk;$REQUESTED_NDK_REVISION."
-              exit 1
-            fi
-
-            echo "Installing ndk;$REQUESTED_NDK_REVISION with sdkmanager."
-            rm -rf "$CANONICAL_NDK_DIR"
-
-            set +o pipefail
-            yes | "$sdkmanager" --licenses >/dev/null
-            license_status=${PIPESTATUS[1]}
-            yes | "$sdkmanager" --install "ndk;$REQUESTED_NDK_REVISION"
-            install_status=${PIPESTATUS[1]}
-            set -o pipefail
-
-            if [ "$license_status" -ne 0 ]; then
-              echo "::warning::sdkmanager --licenses exited with status $license_status; continuing because licenses may already be accepted."
-            fi
-            if [ "$install_status" -ne 0 ]; then
-              echo "::error::sdkmanager failed to install ndk;$REQUESTED_NDK_REVISION with status $install_status."
-              exit "$install_status"
-            fi
-          }
-
-          REQUESTED_NDK_REVISION="$(resolve_ndk_revision "$REQUESTED_NDK_VERSION")"
-          CANONICAL_NDK_DIR="$SDK_ROOT/ndk/$REQUESTED_NDK_REVISION"
-          mkdir -p "$SDK_ROOT/ndk"
-
-          COMPLETE_NDK_DIR="$(find_complete_requested_ndk || true)"
-
-          if [ -n "$COMPLETE_NDK_DIR" ] && [ "$COMPLETE_NDK_DIR" != "$CANONICAL_NDK_DIR" ]; then
-            echo "Found complete requested NDK at $COMPLETE_NDK_DIR; linking it to $CANONICAL_NDK_DIR for Gradle ndkVersion resolution."
-            rm -rf "$CANONICAL_NDK_DIR"
-            ln -s "$COMPLETE_NDK_DIR" "$CANONICAL_NDK_DIR"
-          fi
-
-          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
-            echo "::warning::Canonical NDK is missing or incomplete: $CANONICAL_NDK_DIR"
-            install_requested_ndk
-          fi
-
-          if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
-            echo "::error::NDK installation is incomplete after repair: missing $CANONICAL_NDK_DIR/$TOOLCHAIN_REL or source.properties revision is not $REQUESTED_NDK_REVISION."
-            echo "Detected SDK NDK directories:"
-            find "$SDK_ROOT/ndk" -maxdepth 2 -name source.properties -print -exec awk -F'= *' '/^Pkg.Revision/ {print "  " FILENAME ": " $2}' {} \; 2>/dev/null || true
-            exit 1
-          fi
-
-          echo "ANDROID_NDK_HOME=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_ROOT=$CANONICAL_NDK_DIR" >> "$GITHUB_ENV"
-          echo "$CANONICAL_NDK_DIR" >> "$GITHUB_PATH"
-          echo "$CANONICAL_NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
-          echo "NDK verified: $REQUESTED_NDK_VERSION -> $REQUESTED_NDK_REVISION ($CANONICAL_NDK_DIR)"
       - name: Resolve pre-build command
         id: prebuild
         shell: bash
         env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           PRE_BUILD_COMMAND_INPUT: ${{ inputs.pre_build_command }}
         run: |
           set -euo pipefail
-
-          trim() {
-            local value="$1"
-            value="${value#"${value%%[![:space:]]*}"}"
-            value="${value%"${value##*[![:space:]]}"}"
-            printf '%s' "$value"
-          }
-
-          raw_command="$(trim "${PRE_BUILD_COMMAND_INPUT:-}")"
-          needed="false"
-          uses_go="false"
-          cache_path=""
-          mode="none"
-          command_value=""
-
-          case "$raw_command" in
-            ""|none|NONE|skip|SKIP)
-              mode="none"
-              ;;
-            auto|AUTO)
-              if [ -f ./run ] && [ -f libcore/build.sh ]; then
-                needed="true"
-                uses_go="true"
-                cache_path="app/libs/libcore.aar"
-                mode="auto-nekobox-libcore"
-                command_value="./run lib core"
-              else
-                mode="auto-none"
-              fi
-              ;;
-            *)
-              needed="true"
-              mode="manual"
-              command_value="$raw_command"
-              if [[ "$raw_command" == *go* ]] || [[ "$raw_command" == *gomobile* ]] || [[ "$raw_command" == *"./run lib core"* ]]; then
-                uses_go="true"
-              fi
-              ;;
-          esac
-
-          {
-            echo "needed=$needed"
-            echo "uses_go=$uses_go"
-            echo "cache_path=$cache_path"
-            echo "mode=$mode"
-            echo "command<<__PRE_BUILD_COMMAND__"
-            printf '%s\n' "$command_value"
-            echo "__PRE_BUILD_COMMAND__"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Pre-build mode: $mode"
-          echo "Pre-build needed: $needed"
-          if [ "$needed" = "true" ]; then
-            echo "Pre-build command: $command_value"
-            if [ -n "$cache_path" ]; then
-              echo "Pre-build output/cache path: $cache_path"
-            fi
-          fi
+          python3 "$CI_HELPERS_DIR/resolve-prebuild.py"
 
       - name: Setup Go
         if: ${{ steps.prebuild.outputs.uses_go == 'true' }}
@@ -1253,28 +819,13 @@ jobs:
         if: ${{ steps.prebuild.outputs.needed == 'true' }}
         shell: bash
         env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           PRE_BUILD_COMMAND: ${{ steps.prebuild.outputs.command }}
           PRE_BUILD_CACHE_PATH: ${{ steps.prebuild.outputs.cache_path }}
           PRE_BUILD_MODE: ${{ steps.prebuild.outputs.mode }}
         run: |
           set -euo pipefail
-
-          if [ -n "$PRE_BUILD_CACHE_PATH" ] && [ -e "$PRE_BUILD_CACHE_PATH" ]; then
-            echo "Pre-build output already exists, skipping command: $PRE_BUILD_CACHE_PATH"
-            exit 0
-          fi
-
-          if [ "$PRE_BUILD_MODE" = "auto-nekobox-libcore" ]; then
-            chmod +x ./run libcore/*.sh buildScript/*.sh 2>/dev/null || true
-          fi
-
-          echo "Running pre-build command: $PRE_BUILD_COMMAND"
-          bash -eo pipefail -c "$PRE_BUILD_COMMAND"
-
-          if [ -n "$PRE_BUILD_CACHE_PATH" ] && [ ! -e "$PRE_BUILD_CACHE_PATH" ]; then
-            echo "::error::Pre-build command completed, but expected output was not found: $PRE_BUILD_CACHE_PATH"
-            exit 1
-          fi
+          bash "$CI_HELPERS_DIR/run-prebuild.sh"
 
       - name: Validate build target
         shell: bash
@@ -1300,17 +851,12 @@ jobs:
       - name: Build project
         shell: bash
         env:
-          MATRIX_MODULE: ${{ matrix.module }}
-          MATRIX_GRADLE_TASK: ${{ matrix.gradle_task }}
-          BUILD_OPTIONS: ${{ inputs.build_options }}
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          BUILD_OPTIONS_JSON: ${{ needs.setup-matrix.outputs.build_options_json }}
+          GRADLE_TASK: ${{ matrix.module }}:${{ matrix.gradle_task }}
         run: |
           set -euo pipefail
-          chmod +x ./gradlew
-          EXTRA_GRADLE_ARGS=()
-          if [ -n "$BUILD_OPTIONS" ]; then
-            read -r -a EXTRA_GRADLE_ARGS <<< "$BUILD_OPTIONS"
-          fi
-          ./gradlew "${MATRIX_MODULE}:${MATRIX_GRADLE_TASK}" --no-daemon --stacktrace "${EXTRA_GRADLE_ARGS[@]}"
+          bash "$CI_HELPERS_DIR/run-gradle.sh"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
