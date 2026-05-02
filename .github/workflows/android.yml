@@ -11,16 +11,16 @@ on:
 
       branch:
         description: 'Target Branch'
-        required: false
+        required: true
         default: 'main'
 
       module:
-        description: 'Target Module(s), comma-separated; default app'
-        required: false
+        description: 'Target Module(s), comma-separated'
+        required: true
         default: 'app'
 
       build_flavor:
-        description: 'Build Flavor(s), comma-separated; optional'
+        description: 'Build Flavor(s), comma-separated'
         required: false
         default: ''
 
@@ -131,6 +131,7 @@ jobs:
           INPUT_BUILD_TYPE: ${{ inputs.build_type }}
         run: |
           set -euo pipefail
+          chmod +x ./gradlew
 
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
