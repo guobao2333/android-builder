@@ -1,5 +1,5 @@
 name: Android CI
-run-name: "${{ inputs.repository || github.repository }} @ ${{ inputs.branch || 'default branch' }} • #${{ github.run_number }}"
+run-name: "${{ inputs.repository || github.repository }} @ ${{ inputs.branch || 'default branch' }} • ${{ inputs.os_version }} • #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
@@ -57,11 +57,19 @@ on:
         type: boolean
 
       os_version:
-        description: 'OS Version'
+        description: 'Runner image for build jobs'
         required: true
         default: 'ubuntu-latest'
         type: choice
-        options: ['ubuntu-latest', 'ubuntu-22.04']
+        options:
+          - ubuntu-latest
+          - ubuntu-24.04
+          - ubuntu-22.04
+          - macos-latest
+          - macos-26
+          - macos-15
+          - macos-26-intel
+          - macos-15-intel
 
       jdk_version:
         description: 'JDK Version'
@@ -662,6 +670,14 @@ jobs:
           path: ${{ env.CI_WORKFLOW_CHECKOUT_PATH }}
           persist-credentials: false
 
+      - name: Print runner info
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Runner label: ${{ inputs.os_version }}"
+          echo "Runner OS: ${RUNNER_OS:-unknown}"
+          echo "Runner architecture: ${RUNNER_ARCH:-unknown}"
+
       - name: Setup JDK
         uses: actions/setup-java@v5
         with:
@@ -708,7 +724,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.prebuild.outputs.cache_path }}
-          key: ${{ runner.os }}-${{ needs.setup-matrix.outputs.repository_name }}-${{ needs.setup-matrix.outputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ needs.setup-matrix.outputs.repository_name }}-${{ needs.setup-matrix.outputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
 
       - name: Run pre-build command
         if: ${{ steps.prebuild.outputs.needed == 'true' }}
@@ -767,6 +783,14 @@ jobs:
           path: ${{ env.CI_WORKFLOW_CHECKOUT_PATH }}
           persist-credentials: false
 
+      - name: Print runner info
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Runner label: ${{ inputs.os_version }}"
+          echo "Runner OS: ${RUNNER_OS:-unknown}"
+          echo "Runner architecture: ${RUNNER_ARCH:-unknown}"
+
       - name: Setup JDK
         uses: actions/setup-java@v5
         with:
@@ -813,7 +837,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.prebuild.outputs.cache_path }}
-          key: ${{ runner.os }}-${{ needs.setup-matrix.outputs.repository_name }}-${{ needs.setup-matrix.outputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-${{ needs.setup-matrix.outputs.repository_name }}-${{ needs.setup-matrix.outputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
 
       - name: Run pre-build command
         if: ${{ steps.prebuild.outputs.needed == 'true' }}

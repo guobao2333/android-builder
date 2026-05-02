@@ -1,9 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+resolve_default_sdk_root() {
+  case "$(uname -s)" in
+    Darwin) echo "$HOME/Library/Android/sdk" ;;
+    Linux) echo "/usr/local/lib/android/sdk" ;;
+    *) echo "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}" ;;
+  esac
+}
+
+resolve_ndk_host_tag() {
+  case "$(uname -s)" in
+    Darwin) echo "darwin-x86_64" ;;
+    Linux) echo "linux-x86_64" ;;
+    MINGW*|MSYS*|CYGWIN*) echo "windows-x86_64" ;;
+    *)
+      echo "::error::Unsupported NDK host OS: $(uname -s)"
+      exit 1
+      ;;
+  esac
+}
+
+DEFAULT_SDK_ROOT="$(resolve_default_sdk_root)"
+SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$DEFAULT_SDK_ROOT}}"
 REQUESTED_NDK_VERSION="${REQUESTED_NDK_VERSION:-}"
-TOOLCHAIN_REL="toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+NDK_HOST_TAG="$(resolve_ndk_host_tag)"
+TOOLCHAIN_REL="toolchains/llvm/prebuilt/${NDK_HOST_TAG}/bin/llvm-strip"
 
 resolve_ndk_revision() {
   case "$1" in
@@ -130,7 +152,7 @@ fi
 } >> "$GITHUB_ENV"
 {
   echo "$CANONICAL_NDK_DIR"
-  echo "$CANONICAL_NDK_DIR/toolchains/llvm/prebuilt/linux-x86_64/bin"
+  echo "$CANONICAL_NDK_DIR/toolchains/llvm/prebuilt/$NDK_HOST_TAG/bin"
 } >> "$GITHUB_PATH"
 
-echo "NDK verified: $REQUESTED_NDK_VERSION -> $REQUESTED_NDK_REVISION ($CANONICAL_NDK_DIR)"
+echo "NDK verified: $REQUESTED_NDK_VERSION -> $REQUESTED_NDK_REVISION ($CANONICAL_NDK_DIR, host=$NDK_HOST_TAG)"
