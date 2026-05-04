@@ -14,9 +14,9 @@ The workflow defined in `android.yml`:
 - Checks out a target repository with recursive submodules.
 - Uses the target repository default branch when `branch` is empty.
 - Supports a `CHECKOUT_TOKEN` secret for private repositories or private submodules, and falls back to `github.token` for normal access.
-- Sets up Temurin JDK, Android NDK, and Gradle cache.
-- Verifies that the requested NDK revision is installed completely, repairing or installing it with `sdkmanager` when needed, using the correct host toolchain path for Linux or macOS runners.
-- Keeps shared CI logic in `.github/scripts/android-ci/` so NDK verification, pre-build resolution, and Gradle option parsing are not duplicated across jobs.
+- Sets up Temurin JDK, Android NDK, and Gradle cache through the shared `.github/actions/android-ci-prepare` composite action used by setup, test, and build jobs.
+- Verifies that the requested NDK revision is installed completely, reusing `nttld/setup-ndk` local cache entries when possible and repairing or installing with `sdkmanager` only when needed.
+- Keeps shared CI logic in `.github/actions/android-ci-prepare/` and `.github/scripts/android-ci/` so NDK verification, pre-build resolution, Gradle option parsing, unsigned option handling, and summary rendering are not duplicated across jobs.
 - Resolves source metadata: branch/ref, full SHA, short SHA, repository name, and version name.
 - Reads `gradle.properties` for `versionName`, `VERSION_NAME`, or `version`; if none is found, the GitHub run number is used as `version_name`.
 - Uses Gradle task introspection to detect Android application modules and real build variants.
@@ -32,14 +32,33 @@ Place the workflow and helper scripts at:
 
 ```text
 .github/workflows/android.yml
+.github/actions/android-ci-prepare/action.yml
+.github/scripts/android-ci/ndk_versions.py
 .github/scripts/android-ci/verify-ndk.sh
 .github/scripts/android-ci/resolve-prebuild.py
 .github/scripts/android-ci/run-prebuild.sh
 .github/scripts/android-ci/parse-gradle-options.py
+.github/scripts/android-ci/resolve-signing.py
+.github/scripts/android-ci/unsigned_gradle_options.py
 .github/scripts/android-ci/run-gradle.sh
+.github/scripts/android-ci/print-workflow-inputs.py
 ```
 
-The workflow checks out the workflow repository at `github.sha` into a separate helper path, then checks out the target repository. This keeps helper scripts versioned with the workflow even when `repository` points to another target repository.
+The workflow checks out the workflow repository at `github.sha` into a separate helper path, then checks out the target repository. This keeps the composite action and helper scripts versioned with the workflow even when `repository` points to another target repository.
+
+Shared helper responsibilities:
+
+| Path | Responsibility |
+|---|---|
+| `.github/actions/android-ci-prepare/action.yml` | Shared JDK/NDK verification, optional pre-build resolution, Go setup, pre-build cache, and pre-build execution for `setup-matrix`, `test`, and `build`. |
+| `.github/scripts/android-ci/ndk_versions.py` | Single NDK alias-to-full-revision map used by NDK verification. |
+| `.github/scripts/android-ci/verify-ndk.sh` | Validates or repairs the requested NDK and exports `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`. |
+| `.github/scripts/android-ci/resolve-prebuild.py` and `run-prebuild.sh` | Resolve and run optional pre-build commands. |
+| `.github/scripts/android-ci/parse-gradle-options.py` | Normalize raw `build_options` into a JSON array once. |
+| `.github/scripts/android-ci/resolve-signing.py` | Detect whether signing should stay enabled or fall back to unsigned mode. |
+| `.github/scripts/android-ci/unsigned_gradle_options.py` | Single implementation of effective `-Punsigned` detection and appending. |
+| `.github/scripts/android-ci/run-gradle.sh` | Runs Gradle with the resolved options and signing retry behavior. |
+| `.github/scripts/android-ci/print-workflow-inputs.py` | Renders the workflow step summary and console input report from one JSON object. |
 
 ## Inputs
 
@@ -51,6 +70,7 @@ The workflow checks out the workflow repository at `github.sha` into a separate 
 | **build_flavor** | Build flavor filter(s), comma-separated. Leave empty to accept all flavors. Matching is normalized and substring-based. | `string` | empty |
 | **build_type** | Build output selector. | choice: `debug`, `release`, `aab`, `all` | `debug` |
 | **build_options** | Extra Gradle arguments appended to `./gradlew build` and build tasks. Accepts shell-style quoting or a JSON array of strings. | `string` | empty |
+| **signing** | Whether release signing is allowed. Defaults to disabled; release/AAB tasks use `-Punsigned` unless a complete signing config is detected. Debug tasks keep Gradle/Android's default debug signing and only retry with `-Punsigned` after a signing-related failure. | `boolean` | `false` |
 | **pre_build_command** | Pre-build command before Gradle. Use `auto`, `none`, `skip`, or a custom shell command. | `string` | `auto` |
 | **go_version** | Go version passed to `actions/setup-go` when the pre-build command needs Go. | `string` | `^1.25` |
 | **build_test** | Run a separate `./gradlew build` job before the build matrix. | `boolean` | `false` |
@@ -76,7 +96,11 @@ Available runner labels include Linux x64 and macOS runners:
 | `macos-26-intel` | macOS Intel x86_64, pinned macOS 26 | x86_64 macOS builds. |
 | `macos-15-intel` | macOS Intel x86_64, pinned macOS 15 | x86_64 macOS builds with older macOS 15 image. |
 
-The NDK verification helper detects the host OS and checks the matching NDK toolchain directory: `linux-x86_64` on Linux and `darwin-x86_64` on macOS. Pre-build cache keys include both `runner.os` and `runner.arch` so macOS Intel and macOS arm64 runs do not share incompatible cached outputs.
+The shared preparation action runs JDK setup, `nttld/setup-ndk`, and NDK verification in every job that needs Android tooling. `setup-matrix` calls it with `run_prebuild=false`; `test` and `build` call it with `run_prebuild=true` so they also resolve, cache, and run pre-build steps.
+
+The NDK verification helper detects the host OS and checks the matching NDK toolchain directory: `linux-x86_64` on Linux and `darwin-x86_64` on macOS. NDK aliases are resolved by `.github/scripts/android-ci/ndk_versions.py`. Verification searches the canonical SDK directory, `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`, `~/.setup-ndk/<alias>`, `~/.setup-ndk/<revision>`, the broader `~/.setup-ndk` cache, and `$ANDROID_SDK_ROOT/ndk`. A candidate is accepted only when `source.properties` reports the requested full revision and the expected LLVM toolchain binary exists. If a complete cached NDK is found outside the canonical SDK directory, the helper symlinks it to `$ANDROID_SDK_ROOT/ndk/<full-revision>` for Gradle `ndkVersion` resolution. It falls back to `sdkmanager --install ndk;<full-revision>` only when no complete candidate is available.
+
+Pre-build cache keys include `runner.os`, `runner.arch`, repository name, source SHA, requested NDK, Go version, and a runtime SHA256 over `run`, `buildScript`, and `libcore`. This avoids using `hashFiles(...)` inside the composite action and prevents macOS Intel, macOS arm64, and Linux runs from sharing incompatible cached outputs.
 
 
 ## Build type behavior
@@ -113,7 +137,7 @@ Notes:
 
 ## Build options behavior
 
-`build_options` is normalized once in `setup-matrix` and reused by the test and build jobs as a JSON array. This catches quoting mistakes before the build matrix starts and avoids each job reparsing the raw input differently.
+`build_options` is normalized once in `setup-matrix` and reused by the test and build jobs as a JSON array. This catches quoting mistakes before the build matrix starts and avoids each job reparsing the raw input differently. The same normalized JSON array is also passed to the signing and unsigned-option helpers, so all jobs make decisions from the same parsed argument list.
 
 Supported formats:
 
@@ -123,6 +147,20 @@ Supported formats:
 ```
 
 The shell-style form uses POSIX shell-like parsing, so quoted values with spaces are preserved. Empty arguments and newline-containing arguments are rejected.
+
+## Signing behavior
+
+`signing` defaults to `false`. The workflow no longer appends `-Punsigned` globally during setup; instead `run-gradle.sh` applies it only to release/AAB or aggregate tasks such as `build`, `assemble`, and `bundle`. Debug tasks keep Gradle/Android's default debug keystore behavior. The effective unsigned handling is centralized in `.github/scripts/android-ci/unsigned_gradle_options.py`, so `resolve-signing.py` and `run-gradle.sh` use the same rules for explicit `-Punsigned`, `-Punsigned=true`, and `-Punsigned=false`.
+
+When `signing=true`, the workflow checks the target repository and the workflow repository's GitHub Secrets/Variables during `setup-matrix`. Signing stays enabled only when a complete signing config is detected. If no complete config is found, even when `build.gradle` / `build.gradle.kts` declares a `signingConfig`, release/AAB and aggregate tasks fall back to `-Punsigned` to avoid failures caused by missing keystores, aliases, or passwords. Non-release tasks are not overridden up front; if one fails with a signing-related error, it is retried once with `-Punsigned` as a safety net.
+
+Detected sources include:
+
+- Target-repository files such as `keystore.properties`, `key.properties`, `signing.properties`, `release.properties`, `gradle.properties`, keystore files, and signing declarations in Gradle files.
+- Complete signing properties passed in `build_options`, such as `-Pandroid.injected.signing.*` or common signing property names.
+- Workflow repository Secrets/Variables using common groups such as `SIGNING_KEYSTORE_BASE64` + `SIGNING_STORE_PASSWORD` + `SIGNING_KEY_ALIAS` + `SIGNING_KEY_PASSWORD`, `KEYSTORE_BASE64` + `KEYSTORE_PASSWORD` + `KEY_ALIAS` + `KEY_PASSWORD`, `RELEASE_KEYSTORE_BASE64` + `RELEASE_STORE_PASSWORD` + `RELEASE_KEY_ALIAS` + `RELEASE_KEY_PASSWORD`, `ANDROID_INJECTED_SIGNING_*`, and similar variants.
+
+Logs and step summaries show only variable names/sources, never secret values.
 
 ## Pre-build command behavior
 
@@ -151,7 +189,7 @@ For manual commands, Go is installed when the command text contains `go`, `gomob
 When `build_test=true`, the workflow runs a separate `test` job before the build matrix:
 
 ```bash
-./gradlew build --no-daemon --stacktrace <normalized build_options>
+./gradlew build --no-daemon --stacktrace <per-task Gradle options>
 ```
 
 The test job checks out the exact source SHA resolved by `setup-matrix`, sets up JDK/NDK, optionally runs the same pre-build flow, and then runs the full Gradle build.
@@ -161,7 +199,7 @@ The test job checks out the exact source SHA resolved by `setup-matrix`, sets up
 Each build matrix entry runs one Gradle task:
 
 ```bash
-./gradlew <module>:<gradle_task> --no-daemon --stacktrace <normalized build_options>
+./gradlew <module>:<gradle_task> --no-daemon --stacktrace <per-task Gradle options>
 ```
 
 Artifacts are uploaded from the matching module directory:
@@ -194,12 +232,14 @@ The release job uses `contents: write`; other jobs use read-only contents permis
 
 ## Workflow summary
 
-The workflow writes a GitHub step summary containing:
+The workflow passes resolved inputs to `.github/scripts/android-ci/print-workflow-inputs.py` as a single `WORKFLOW_INPUTS_JSON` object. The script uses that one object to render both the GitHub step summary and the console report, then appends dynamic NDK fields such as the resolved revision and `ANDROID_NDK_HOME`. This avoids maintaining separate field lists for environment wiring, Markdown output, and console output.
+
+The summary contains:
 
 - Resolved repository and repository name.
 - Branch input and resolved branch/ref.
 - Source SHA.
-- Module, flavor, build type, raw/normalized build options, pre-build command, and Go version.
+- Module, flavor, build type, raw build options, base Gradle options, per-task signing decision, unsigned scope, pre-build command, and Go version.
 - Build/test/release options.
 - Runner label, JDK, requested NDK, resolved NDK revision, and `ANDROID_NDK_HOME`.
 - Version name.
@@ -214,6 +254,7 @@ repository: ""
 branch: ""
 module: app
 build_type: debug
+signing: false
 ```
 
 ### 2. Build a release AAB from another repository
@@ -223,6 +264,7 @@ repository: some-owner/some-repo
 branch: main
 module: app
 build_type: aab
+signing: true
 upload_release: true
 ```
 
@@ -273,6 +315,7 @@ Example payload:
     "build_flavor": "free,paid",
     "build_type": "all",
     "build_options": "--info '-Pchannel=free beta'",
+    "signing": "false",
     "pre_build_command": "auto",
     "go_version": "^1.25",
     "build_test": "true",
@@ -303,6 +346,7 @@ gh workflow run android.yml \
   -f build_flavor=free,paid \
   -f build_type=all \
   -f build_options="--info '-Pchannel=free beta'" \
+  -f signing=false \
   -f pre_build_command=auto \
   -f go_version='^1.25' \
   -f build_test=true \
@@ -321,9 +365,10 @@ gh workflow run android.yml \
 - Requested module is not an installable Android application module.
 - Requested flavor/build type combination does not exist.
 - `build_options` has invalid shell quoting / JSON syntax, or contains arguments that Gradle does not understand.
+- `signing=true` was selected but signing variables/repository config are incomplete; the workflow falls back to `-Punsigned` for release/AAB/aggregate tasks, but the target project also needs to support that unsigned property.
 - Custom `pre_build_command` fails.
 - Auto pre-build mode runs but does not produce `app/libs/libcore.aar`.
-- Requested NDK version cannot be installed, the host-specific NDK toolchain is missing, or repair still leaves the NDK incomplete.
+- Requested NDK version cannot be installed, no complete cached NDK is found, the host-specific NDK toolchain is missing, or repair still leaves the NDK incomplete.
 
 ## License
 
