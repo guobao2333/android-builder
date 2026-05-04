@@ -28,23 +28,7 @@ NDK_HOST_TAG="$(resolve_ndk_host_tag)"
 TOOLCHAIN_REL="toolchains/llvm/prebuilt/${NDK_HOST_TAG}/bin/llvm-strip"
 
 resolve_ndk_revision() {
-  case "$1" in
-    r29|29.0.14033849) echo "29.0.14033849" ;;
-    r28c|28.2.13676358) echo "28.2.13676358" ;;
-    r27d|27.3.13750724) echo "27.3.13750724" ;;
-    r26d|26.3.11579264) echo "26.3.11579264" ;;
-    r25c|25.2.9519653) echo "25.2.9519653" ;;
-    r24|24.0.8215888) echo "24.0.8215888" ;;
-    r23c|23.2.8568313) echo "23.2.8568313" ;;
-    r22b|22.1.7171670) echo "22.1.7171670" ;;
-    r21e|21.4.7075529) echo "21.4.7075529" ;;
-    r20b|20.1.5948944) echo "20.1.5948944" ;;
-    [0-9]*.[0-9]*.[0-9]*) echo "$1" ;;
-    *)
-      echo "::error::Unable to map NDK version '$1' to a full SDK revision."
-      exit 1
-      ;;
-  esac
+  python3 "${CI_HELPERS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/ndk_versions.py" --resolve "$1"
 }
 
 read_ndk_revision() {
@@ -68,22 +52,53 @@ is_requested_revision() {
   [ "$revision" = "$REQUESTED_NDK_REVISION" ]
 }
 
+candidate_ndk_dirs_from_root() {
+  local root="${1:-}"
+  [ -n "$root" ] || return 0
+  [ -d "$root" ] || return 0
+
+  if [ -f "$root/source.properties" ]; then
+    echo "$root"
+  fi
+
+  # nttld/setup-ndk local-cache may restore to ~/.setup-ndk/rXX with the
+  # actual android-ndk-rXX directory nested below it. Search a bounded depth
+  # for source.properties rather than assuming a single cache layout.
+  find "$root" -mindepth 1 -maxdepth 5 -type f -name source.properties -print 2>/dev/null \
+    | while IFS= read -r source_properties; do
+        dirname "$source_properties"
+      done
+}
+
 find_complete_requested_ndk() {
-  local candidate
-  for candidate in \
+  local root candidate seen_file
+  seen_file="$(mktemp)"
+
+  for root in \
     "$CANONICAL_NDK_DIR" \
-    "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION" \
-    "$HOME/.setup-ndk/$REQUESTED_NDK_REVISION" \
     "${ANDROID_NDK_HOME:-}" \
     "${ANDROID_NDK_ROOT:-}" \
-    "$SDK_ROOT/ndk"/*; do
-    [ -n "$candidate" ] || continue
-    [ -d "$candidate" ] || continue
-    is_requested_revision "$candidate" || continue
-    has_llvm_strip "$candidate" || continue
-    echo "$candidate"
-    return 0
+    "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION" \
+    "$HOME/.setup-ndk/$REQUESTED_NDK_REVISION" \
+    "$HOME/.setup-ndk" \
+    "$SDK_ROOT/ndk"; do
+    [ -n "$root" ] || continue
+    while IFS= read -r candidate; do
+      [ -n "$candidate" ] || continue
+      [ -d "$candidate" ] || continue
+      if grep -Fxq "$candidate" "$seen_file" 2>/dev/null; then
+        continue
+      fi
+      echo "$candidate" >> "$seen_file"
+      is_requested_revision "$candidate" || continue
+      has_llvm_strip "$candidate" || continue
+      rm -f "$seen_file"
+      echo "$candidate"
+      return 0
+    done < <(candidate_ndk_dirs_from_root "$root")
   done
+
+  rm -f "$seen_file"
   return 1
 }
 

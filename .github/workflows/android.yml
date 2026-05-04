@@ -136,7 +136,6 @@ jobs:
       repository_name: ${{ steps.meta.outputs.repository_name }}
       build_options_json: ${{ steps.signing.outputs.build_options_json }}
       build_options_display: ${{ steps.signing.outputs.build_options_display }}
-      signing_requested: ${{ steps.signing.outputs.signing_requested }}
       signing_config_detected: ${{ steps.signing.outputs.signing_config_detected }}
       signing_config_sources: ${{ steps.signing.outputs.signing_config_sources }}
       effective_signing: ${{ steps.signing.outputs.effective_signing }}
@@ -219,29 +218,14 @@ jobs:
           echo "source_short_sha=$SOURCE_SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "Checked out source: ref=$SOURCE_REF sha=$SOURCE_SHA"
 
-      - name: Setup JDK
-        uses: actions/setup-java@v5
+      - name: Prepare Android CI toolchain
+        uses: ./.android-ci-workflow/.github/actions/android-ci-prepare
         with:
-          java-version: ${{ inputs.jdk_version }}
-          distribution: 'temurin'
-          cache: gradle
-
-      - name: Setup NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: ${{ inputs.ndk_version }}
-          add-to-path: true
-          link-to-sdk: true
-          local-cache: true
-
-      - name: Verify NDK toolchain
-        shell: bash
-        env:
-          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
-          REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
-        run: |
-          set -euo pipefail
-          bash "$CI_HELPERS_DIR/verify-ndk.sh"
+          helpers_dir: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          runner_label: ubuntu-latest
+          jdk_version: ${{ inputs.jdk_version }}
+          ndk_version: ${{ inputs.ndk_version }}
+          run_prebuild: 'false'
 
       - name: Resolve version name
         id: version
@@ -543,171 +527,42 @@ jobs:
       - name: Print resolved workflow inputs
         shell: bash
         env:
-          RESOLVED_REPOSITORY: ${{ steps.meta.outputs.repository }}
-          RESOLVED_REPOSITORY_NAME: ${{ steps.meta.outputs.repository_name }}
-          REQUESTED_BRANCH: ${{ inputs.branch }}
-          RESOLVED_BRANCH: ${{ steps.source.outputs.source_ref }}
-          RESOLVED_SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
-          RESOLVED_SOURCE_SHORT_SHA: ${{ steps.source.outputs.source_short_sha }}
-          RESOLVED_OS_VERSION: ${{ inputs.os_version }}
-          RESOLVED_JDK_VERSION: ${{ inputs.jdk_version }}
-          RESOLVED_NDK_VERSION: ${{ inputs.ndk_version }}
-          RESOLVED_BUILD_TEST: ${{ inputs.build_test }}
-          RESOLVED_UPLOAD_RELEASE: ${{ inputs.upload_release }}
-          RESOLVED_BUILD_OPTIONS: ${{ inputs.build_options }}
-          NORMALIZED_BUILD_OPTIONS: ${{ steps.signing.outputs.build_options_display }}
-          RESOLVED_BUILD_OPTIONS_JSON: ${{ steps.signing.outputs.build_options_json }}
-          RESOLVED_SIGNING: ${{ inputs.signing }}
-          RESOLVED_SIGNING_CONFIG_DETECTED: ${{ steps.signing.outputs.signing_config_detected }}
-          RESOLVED_SIGNING_CONFIG_SOURCES: ${{ steps.signing.outputs.signing_config_sources }}
-          RESOLVED_EFFECTIVE_SIGNING: ${{ steps.signing.outputs.effective_signing }}
-          RESOLVED_UNSIGNED_SCOPE: ${{ steps.signing.outputs.unsigned_scope }}
-          RESOLVED_UNSIGNED_REASON: ${{ steps.signing.outputs.unsigned_reason }}
-          RESOLVED_PRE_BUILD_COMMAND: ${{ inputs.pre_build_command }}
-          RESOLVED_GO_VERSION: ${{ inputs.go_version }}
-          REQUESTED_MODULE: ${{ inputs.module }}
-          REQUESTED_BUILD_FLAVOR: ${{ inputs.build_flavor }}
-          REQUESTED_BUILD_TYPE: ${{ inputs.build_type }}
-          RESOLVED_VERSION_NAME: ${{ steps.version.outputs.version_name }}
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          WORKFLOW_INPUTS_JSON: >-
+            {
+              "repository": ${{ toJson(steps.meta.outputs.repository) }},
+              "repository_name": ${{ toJson(steps.meta.outputs.repository_name) }},
+              "branch_input": ${{ toJson(inputs.branch || '(empty; target default branch)') }},
+              "resolved_branch_or_ref": ${{ toJson(steps.source.outputs.source_ref) }},
+              "source_sha": ${{ toJson(steps.source.outputs.source_sha) }},
+              "source_short_sha": ${{ toJson(steps.source.outputs.source_short_sha) }},
+              "module": ${{ toJson(inputs.module) }},
+              "build_flavor": ${{ toJson(inputs.build_flavor) }},
+              "build_type": ${{ toJson(inputs.build_type) }},
+              "build_options": ${{ toJson(inputs.build_options) }},
+              "base_gradle_options": ${{ toJson(steps.signing.outputs.build_options_display || '(none)') }},
+              "base_gradle_options_json": ${{ toJson(steps.signing.outputs.build_options_json || '[]') }},
+              "signing": ${{ toJson(inputs.signing) }},
+              "effective_signing": ${{ toJson(steps.signing.outputs.effective_signing) }},
+              "unsigned_scope": ${{ toJson(steps.signing.outputs.unsigned_scope) }},
+              "signing_config_detected": ${{ toJson(steps.signing.outputs.signing_config_detected) }},
+              "signing_config_sources": ${{ toJson(steps.signing.outputs.signing_config_sources || 'none') }},
+              "unsigned_reason": ${{ toJson(steps.signing.outputs.unsigned_reason) }},
+              "pre_build_command": ${{ toJson(inputs.pre_build_command) }},
+              "go_version": ${{ toJson(inputs.go_version) }},
+              "build_test": ${{ toJson(inputs.build_test) }},
+              "upload_release": ${{ toJson(inputs.upload_release) }},
+              "os_version": ${{ toJson(inputs.os_version) }},
+              "jdk_version": ${{ toJson(inputs.jdk_version) }},
+              "ndk_version": ${{ toJson(inputs.ndk_version) }},
+              "version_name": ${{ toJson(steps.version.outputs.version_name) }},
+              "checkout_submodules": "recursive"
+            }
           RESOLVED_MATRIX: ${{ steps.meta.outputs.matrix }}
         run: |
           set -euo pipefail
+          python3 "$CI_HELPERS_DIR/print-workflow-inputs.py"
 
-          python3 - <<'PY'
-          import json
-          import os
-          import sys
-
-          def value(name: str, default: str = "") -> str:
-              return os.environ.get(name, default)
-
-          def md_escape(text: str) -> str:
-              return text.replace("|", "\\|").replace("\n", "<br>")
-
-          def add_input_row(rows: list[str], key: str, val: str) -> None:
-              rows.append(f"| `{key}` | `{md_escape(val)}` |")
-
-          def read_ndk_revision_from_env() -> str:
-              ndk_home = value("ANDROID_NDK_HOME")
-              if not ndk_home:
-                  return ""
-              source_properties = os.path.join(ndk_home, "source.properties")
-              try:
-                  with open(source_properties, "r", encoding="utf-8") as fh:
-                      for line in fh:
-                          if line.startswith("Pkg.Revision") and "=" in line:
-                              return line.split("=", 1)[1].strip()
-              except OSError:
-                  return ""
-              return ""
-
-          matrix_json = value("RESOLVED_MATRIX", '{"include": []}')
-          try:
-              entries = json.loads(matrix_json).get("include", [])
-          except json.JSONDecodeError as exc:
-              print(f"::error::Unable to parse resolved matrix: {exc}", file=sys.stderr)
-              raise
-
-          rows = [
-              "### Resolved manual workflow inputs",
-              "",
-              "| Input | Final value used |",
-              "| --- | --- |",
-          ]
-          add_input_row(rows, "repository", value("RESOLVED_REPOSITORY"))
-          add_input_row(rows, "repository_name", value("RESOLVED_REPOSITORY_NAME"))
-          add_input_row(rows, "branch_input", value("REQUESTED_BRANCH") or "(empty; target default branch)")
-          add_input_row(rows, "resolved_branch_or_ref", value("RESOLVED_BRANCH"))
-          add_input_row(rows, "source_sha", value("RESOLVED_SOURCE_SHA"))
-          add_input_row(rows, "module", value("REQUESTED_MODULE"))
-          add_input_row(rows, "build_flavor", value("REQUESTED_BUILD_FLAVOR"))
-          add_input_row(rows, "build_type", value("REQUESTED_BUILD_TYPE"))
-          add_input_row(rows, "build_options", value("RESOLVED_BUILD_OPTIONS"))
-          add_input_row(rows, "base_gradle_options", value("NORMALIZED_BUILD_OPTIONS") or "(none)")
-          add_input_row(rows, "base_gradle_options_json", value("RESOLVED_BUILD_OPTIONS_JSON") or "[]")
-          add_input_row(rows, "signing", value("RESOLVED_SIGNING"))
-          add_input_row(rows, "effective_signing", value("RESOLVED_EFFECTIVE_SIGNING"))
-          add_input_row(rows, "unsigned_scope", value("RESOLVED_UNSIGNED_SCOPE"))
-          add_input_row(rows, "signing_config_detected", value("RESOLVED_SIGNING_CONFIG_DETECTED"))
-          add_input_row(rows, "signing_config_sources", value("RESOLVED_SIGNING_CONFIG_SOURCES") or "none")
-          add_input_row(rows, "unsigned_reason", value("RESOLVED_UNSIGNED_REASON"))
-          add_input_row(rows, "pre_build_command", value("RESOLVED_PRE_BUILD_COMMAND"))
-          add_input_row(rows, "go_version", value("RESOLVED_GO_VERSION"))
-          add_input_row(rows, "build_test", value("RESOLVED_BUILD_TEST"))
-          add_input_row(rows, "upload_release", value("RESOLVED_UPLOAD_RELEASE"))
-          add_input_row(rows, "os_version", value("RESOLVED_OS_VERSION"))
-          add_input_row(rows, "jdk_version", value("RESOLVED_JDK_VERSION"))
-          add_input_row(rows, "ndk_version", value("RESOLVED_NDK_VERSION"))
-          add_input_row(rows, "resolved_ndk_revision", read_ndk_revision_from_env())
-          add_input_row(rows, "android_ndk_home", value("ANDROID_NDK_HOME"))
-          add_input_row(rows, "version_name", value("RESOLVED_VERSION_NAME"))
-          add_input_row(rows, "checkout_submodules", "recursive")
-
-          rows.extend([
-              "",
-              "### Resolved build matrix",
-              "",
-              "| # | Module | Flavor | Build type | Artifact | Gradle task | Artifact name |",
-              "| ---: | --- | --- | --- | --- | --- | --- |",
-          ])
-
-          for index, item in enumerate(entries, start=1):
-              rows.append(
-                  "| {index} | `{module}` | `{flavor}` | `{build_type}` | `{artifact_type}` | `{task}` | `{artifact_name}` |".format(
-                      index=index,
-                      module=md_escape(item.get("module", "")),
-                      flavor=md_escape(item.get("flavor") or "-"),
-                      build_type=md_escape(item.get("build_type", "")),
-                      artifact_type=md_escape(item.get("artifact_type", "")),
-                      task=md_escape(item.get("gradle_task", "")),
-                      artifact_name=md_escape(item.get("artifact_name", "")),
-                  )
-              )
-
-          summary = "\n".join(rows) + "\n"
-          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-          if summary_path:
-              with open(summary_path, "a", encoding="utf-8") as fh:
-                  fh.write(summary)
-
-          print("Resolved manual workflow inputs:")
-          print(f"  repository: {value('RESOLVED_REPOSITORY')}")
-          print(f"  branch input: {value('REQUESTED_BRANCH') or '(empty; target default branch)'}")
-          print(f"  resolved branch/ref: {value('RESOLVED_BRANCH')}")
-          print(f"  source sha: {value('RESOLVED_SOURCE_SHA')}")
-          print(f"  module input: {value('REQUESTED_MODULE')}")
-          print(f"  build_flavor input: {value('REQUESTED_BUILD_FLAVOR')}")
-          print(f"  build_type input: {value('REQUESTED_BUILD_TYPE')}")
-          print(f"  build_options: {value('RESOLVED_BUILD_OPTIONS')}")
-          print(f"  base Gradle options: {value('NORMALIZED_BUILD_OPTIONS') or '(none)'}")
-          print(f"  base Gradle options JSON: {value('RESOLVED_BUILD_OPTIONS_JSON') or '[]'}")
-          print(f"  signing: {value('RESOLVED_SIGNING')}")
-          print(f"  effective signing: {value('RESOLVED_EFFECTIVE_SIGNING')}")
-          print(f"  unsigned scope: {value('RESOLVED_UNSIGNED_SCOPE')}")
-          print(f"  signing config detected: {value('RESOLVED_SIGNING_CONFIG_DETECTED')}")
-          print(f"  signing config sources: {value('RESOLVED_SIGNING_CONFIG_SOURCES') or 'none'}")
-          print(f"  unsigned reason: {value('RESOLVED_UNSIGNED_REASON')}")
-          print(f"  pre_build_command: {value('RESOLVED_PRE_BUILD_COMMAND')}")
-          print(f"  go_version: {value('RESOLVED_GO_VERSION')}")
-          print(f"  build_test: {value('RESOLVED_BUILD_TEST')}")
-          print(f"  upload_release: {value('RESOLVED_UPLOAD_RELEASE')}")
-          print(f"  os_version: {value('RESOLVED_OS_VERSION')}")
-          print(f"  jdk_version: {value('RESOLVED_JDK_VERSION')}")
-          print(f"  ndk_version: {value('RESOLVED_NDK_VERSION')}")
-          print(f"  resolved_ndk_revision: {read_ndk_revision_from_env()}")
-          print(f"  android_ndk_home: {value('ANDROID_NDK_HOME')}")
-          print(f"  version_name: {value('RESOLVED_VERSION_NAME')}")
-          print("Resolved build matrix:")
-          for index, item in enumerate(entries, start=1):
-              print(
-                  f"  {index}. module={item.get('module', '')} "
-                  f"flavor={item.get('flavor') or '-'} "
-                  f"build_type={item.get('build_type', '')} "
-                  f"artifact_type={item.get('artifact_type', '')} "
-                  f"gradle_task={item.get('gradle_task', '')} "
-                  f"artifact_name={item.get('artifact_name', '')}"
-              )
-          PY
 
   test:
     if: ${{ inputs.build_test }}

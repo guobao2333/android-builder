@@ -1,5 +1,5 @@
 name: Prepare Android CI job
-description: Shared Android CI preparation for test and build jobs.
+description: Shared Android CI preparation for setup, test, and build jobs.
 inputs:
   helpers_dir:
     description: Absolute path to checked-out Android CI helper scripts.
@@ -13,18 +13,26 @@ inputs:
   ndk_version:
     description: NDK version or alias to install and verify.
     required: true
+  run_prebuild:
+    description: Whether to resolve, cache, and run the pre-build command.
+    required: false
+    default: 'true'
   pre_build_command:
     description: Pre-build command input passed to resolve-prebuild.py.
-    required: true
+    required: false
+    default: 'none'
   go_version:
     description: Go version for pre-build commands that need Go.
-    required: true
+    required: false
+    default: ''
   repository_name:
     description: Resolved repository name used in the pre-build cache key.
-    required: true
+    required: false
+    default: ''
   source_sha:
     description: Resolved source commit used in the pre-build cache key.
-    required: true
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -61,6 +69,7 @@ runs:
         bash "$CI_HELPERS_DIR/verify-ndk.sh"
 
     - name: Resolve pre-build command
+      if: ${{ inputs.run_prebuild == 'true' }}
       id: prebuild
       shell: bash
       env:
@@ -71,21 +80,79 @@ runs:
         python3 "$CI_HELPERS_DIR/resolve-prebuild.py"
 
     - name: Setup Go
-      if: ${{ steps.prebuild.outputs.uses_go == 'true' }}
+      if: ${{ inputs.run_prebuild == 'true' && steps.prebuild.outputs.uses_go == 'true' }}
       uses: actions/setup-go@v6
       with:
         go-version: ${{ inputs.go_version }}
         cache: false
 
+    - name: Compute pre-build cache key
+      if: ${{ inputs.run_prebuild == 'true' && steps.prebuild.outputs.cache_path != '' }}
+      id: prebuild_cache
+      shell: bash
+      env:
+        REPOSITORY_NAME: ${{ inputs.repository_name }}
+        SOURCE_SHA: ${{ inputs.source_sha }}
+        REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
+        GO_VERSION: ${{ inputs.go_version }}
+      run: |
+        set -euo pipefail
+        python3 - <<'PY' >> "$GITHUB_OUTPUT"
+        from __future__ import annotations
+
+        import hashlib
+        import os
+        from pathlib import Path
+
+        def iter_cache_inputs(paths: tuple[str, ...]) -> list[Path]:
+            files: list[Path] = []
+            for raw in paths:
+                root = Path(raw)
+                if root.is_file() or root.is_symlink():
+                    files.append(root)
+                elif root.is_dir():
+                    files.extend(path for path in root.rglob("*") if path.is_file() or path.is_symlink())
+            return sorted(files, key=lambda path: path.as_posix())
+
+        digest = hashlib.sha256()
+        files = iter_cache_inputs(("run", "buildScript", "libcore"))
+        for path in files:
+            rel = path.as_posix()
+            digest.update(rel.encode("utf-8"))
+            digest.update(b"\0")
+            if path.is_symlink():
+                digest.update(b"symlink\0")
+                digest.update(os.readlink(path).encode("utf-8"))
+            else:
+                digest.update(b"file\0")
+                with path.open("rb") as fh:
+                    for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                        digest.update(chunk)
+            digest.update(b"\0")
+
+        source_hash = digest.hexdigest() if files else "no-prebuild-source-files"
+        prefix = "{os_name}-{arch}-{repo}-{sha}-prebuild-{ndk}-{go}".format(
+            os_name=os.environ.get("RUNNER_OS", "unknown"),
+            arch=os.environ.get("RUNNER_ARCH", "unknown"),
+            repo=os.environ.get("REPOSITORY_NAME", "unknown"),
+            sha=os.environ.get("SOURCE_SHA", "unknown"),
+            ndk=os.environ.get("REQUESTED_NDK_VERSION", "unknown"),
+            go=os.environ.get("GO_VERSION", ""),
+        )
+        print(f"key={prefix}-{source_hash}")
+        print(f"source_hash={source_hash}")
+        print(f"source_file_count={len(files)}")
+        PY
+
     - name: Cache pre-build outputs
-      if: ${{ steps.prebuild.outputs.cache_path != '' }}
+      if: ${{ inputs.run_prebuild == 'true' && steps.prebuild.outputs.cache_path != '' }}
       uses: actions/cache@v5
       with:
         path: ${{ steps.prebuild.outputs.cache_path }}
-        key: ${{ runner.os }}-${{ runner.arch }}-${{ inputs.repository_name }}-${{ inputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
+        key: ${{ steps.prebuild_cache.outputs.key }}
 
     - name: Run pre-build command
-      if: ${{ steps.prebuild.outputs.needed == 'true' }}
+      if: ${{ inputs.run_prebuild == 'true' && steps.prebuild.outputs.needed == 'true' }}
       shell: bash
       env:
         CI_HELPERS_DIR: ${{ inputs.helpers_dir }}

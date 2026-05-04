@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import List, Sequence, Tuple
 
-from unsigned_gradle_options import ensure_unsigned, has_explicit_unsigned
+from unsigned_gradle_options import has_explicit_unsigned
 
 
 EXCLUDED_DIRS = {".git", ".gradle", "build", ".idea", ".github", "node_modules"}
@@ -374,25 +374,17 @@ def main() -> None:
         if requested_signing and not signing_config_detected:
             gha_warning("Signing was requested, but no complete repository/variable signing config was detected. Release tasks will use -Punsigned to avoid build failures.")
 
-    unsigned_options, unsigned_added = ensure_unsigned(options)
     build_options_json = json.dumps(options, ensure_ascii=False, separators=(",", ":"))
     build_options_display = shlex.join(options)
-    unsigned_build_options_json = json.dumps(unsigned_options, ensure_ascii=False, separators=(",", ":"))
-    unsigned_build_options_display = shlex.join(unsigned_options)
     sources_display = ", ".join(detected_sources) if detected_sources else "none"
 
     output("build_options_json", build_options_json)
     output("build_options_display", build_options_display)
-    output("unsigned_build_options_json", unsigned_build_options_json)
-    output("unsigned_build_options_display", unsigned_build_options_display)
-    output("signing_requested", "true" if requested_signing else "false")
     output("signing_config_detected", "true" if signing_config_detected else "false")
     output("signing_config_sources", sources_display)
-    output("gradle_declares_signing", "true" if gradle_declares_signing else "false")
     output("effective_signing", effective_signing)
     output("unsigned_scope", unsigned_scope)
     output("unsigned_reason", unsigned_reason)
-    output("unsigned_added", "true" if unsigned_added else "false")
 
     print(f"Signing input: {'enabled' if requested_signing else 'disabled'}")
     print(f"Signing config detected: {'yes' if signing_config_detected else 'no'}")
@@ -402,7 +394,6 @@ def main() -> None:
     print(f"Unsigned scope: {unsigned_scope}")
     print(f"Unsigned fallback reason: {unsigned_reason}")
     print(f"Base Gradle args: {build_options_display or '(none)'}")
-    print(f"Unsigned Gradle args: {unsigned_build_options_display or '(none)'}")
 
 
 if __name__ == "__main__":
