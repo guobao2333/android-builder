@@ -1,0 +1,97 @@
+name: Prepare Android CI job
+description: Shared Android CI preparation for test and build jobs.
+inputs:
+  helpers_dir:
+    description: Absolute path to checked-out Android CI helper scripts.
+    required: true
+  runner_label:
+    description: Requested runner label for diagnostics.
+    required: true
+  jdk_version:
+    description: JDK version to install.
+    required: true
+  ndk_version:
+    description: NDK version or alias to install and verify.
+    required: true
+  pre_build_command:
+    description: Pre-build command input passed to resolve-prebuild.py.
+    required: true
+  go_version:
+    description: Go version for pre-build commands that need Go.
+    required: true
+  repository_name:
+    description: Resolved repository name used in the pre-build cache key.
+    required: true
+  source_sha:
+    description: Resolved source commit used in the pre-build cache key.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Print runner info
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Runner label: ${{ inputs.runner_label }}"
+        echo "Runner OS: ${RUNNER_OS:-unknown}"
+        echo "Runner architecture: ${RUNNER_ARCH:-unknown}"
+
+    - name: Setup JDK
+      uses: actions/setup-java@v5
+      with:
+        java-version: ${{ inputs.jdk_version }}
+        distribution: temurin
+        cache: gradle
+
+    - name: Setup NDK
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: ${{ inputs.ndk_version }}
+        add-to-path: true
+        link-to-sdk: true
+        local-cache: true
+
+    - name: Verify NDK toolchain
+      shell: bash
+      env:
+        CI_HELPERS_DIR: ${{ inputs.helpers_dir }}
+        REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
+      run: |
+        set -euo pipefail
+        bash "$CI_HELPERS_DIR/verify-ndk.sh"
+
+    - name: Resolve pre-build command
+      id: prebuild
+      shell: bash
+      env:
+        CI_HELPERS_DIR: ${{ inputs.helpers_dir }}
+        PRE_BUILD_COMMAND_INPUT: ${{ inputs.pre_build_command }}
+      run: |
+        set -euo pipefail
+        python3 "$CI_HELPERS_DIR/resolve-prebuild.py"
+
+    - name: Setup Go
+      if: ${{ steps.prebuild.outputs.uses_go == 'true' }}
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ inputs.go_version }}
+        cache: false
+
+    - name: Cache pre-build outputs
+      if: ${{ steps.prebuild.outputs.cache_path != '' }}
+      uses: actions/cache@v5
+      with:
+        path: ${{ steps.prebuild.outputs.cache_path }}
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ inputs.repository_name }}-${{ inputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
+
+    - name: Run pre-build command
+      if: ${{ steps.prebuild.outputs.needed == 'true' }}
+      shell: bash
+      env:
+        CI_HELPERS_DIR: ${{ inputs.helpers_dir }}
+        PRE_BUILD_COMMAND: ${{ steps.prebuild.outputs.command }}
+        PRE_BUILD_CACHE_PATH: ${{ steps.prebuild.outputs.cache_path }}
+        PRE_BUILD_MODE: ${{ steps.prebuild.outputs.mode }}
+      run: |
+        set -euo pipefail
+        bash "$CI_HELPERS_DIR/run-prebuild.sh"

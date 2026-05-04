@@ -36,6 +36,11 @@ on:
         required: false
         default: ''
 
+      signing:
+        description: 'Sign release artifacts when repository/variable signing config is available'
+        default: false
+        type: boolean
+
       pre_build_command:
         description: 'Pre-build command before Gradle (auto, none, or a shell command)'
         required: false
@@ -91,6 +96,36 @@ permissions:
 env:
   CI_WORKFLOW_CHECKOUT_PATH: .android-ci-workflow
   CI_HELPERS_RELATIVE_PATH: .github/scripts/android-ci
+  # Optional Android signing configuration. Values may be defined as either
+  # repository secrets or repository variables. Only variable names/sources
+  # are printed by helper scripts, never secret values.
+  ANDROID_INJECTED_SIGNING_STORE_FILE: ${{ secrets.ANDROID_INJECTED_SIGNING_STORE_FILE || vars.ANDROID_INJECTED_SIGNING_STORE_FILE }}
+  ANDROID_INJECTED_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_INJECTED_SIGNING_STORE_PASSWORD || vars.ANDROID_INJECTED_SIGNING_STORE_PASSWORD }}
+  ANDROID_INJECTED_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_INJECTED_SIGNING_KEY_ALIAS || vars.ANDROID_INJECTED_SIGNING_KEY_ALIAS }}
+  ANDROID_INJECTED_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_INJECTED_SIGNING_KEY_PASSWORD || vars.ANDROID_INJECTED_SIGNING_KEY_PASSWORD }}
+  SIGNING_KEY: ${{ secrets.SIGNING_KEY || vars.SIGNING_KEY }}
+  SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 || vars.SIGNING_KEYSTORE_BASE64 }}
+  SIGNING_KEYSTORE_FILE: ${{ secrets.SIGNING_KEYSTORE_FILE || vars.SIGNING_KEYSTORE_FILE }}
+  SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD || vars.SIGNING_STORE_PASSWORD }}
+  SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS || vars.SIGNING_KEY_ALIAS }}
+  SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD || vars.SIGNING_KEY_PASSWORD }}
+  KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 || vars.KEYSTORE_BASE64 }}
+  KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE || vars.KEYSTORE_FILE }}
+  KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD || vars.KEYSTORE_PASSWORD }}
+  KEY_ALIAS: ${{ secrets.KEY_ALIAS || vars.KEY_ALIAS }}
+  KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || vars.KEY_PASSWORD }}
+  ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 || vars.ANDROID_KEYSTORE_BASE64 }}
+  ANDROID_KEYSTORE_FILE: ${{ secrets.ANDROID_KEYSTORE_FILE || vars.ANDROID_KEYSTORE_FILE }}
+  ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || vars.ANDROID_KEYSTORE_PASSWORD }}
+  ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || vars.ANDROID_KEY_ALIAS }}
+  ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || vars.ANDROID_KEY_PASSWORD }}
+  RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 || vars.RELEASE_KEYSTORE_BASE64 }}
+  RELEASE_KEYSTORE_FILE: ${{ secrets.RELEASE_KEYSTORE_FILE || vars.RELEASE_KEYSTORE_FILE }}
+  RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD || vars.RELEASE_STORE_PASSWORD }}
+  RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS || vars.RELEASE_KEY_ALIAS }}
+  RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD || vars.RELEASE_KEY_PASSWORD }}
+  STORE_FILE: ${{ secrets.STORE_FILE || vars.STORE_FILE }}
+  STORE_PASSWORD: ${{ secrets.STORE_PASSWORD || vars.STORE_PASSWORD }}
 
 jobs:
   setup-matrix:
@@ -99,8 +134,14 @@ jobs:
       matrix: ${{ steps.meta.outputs.matrix }}
       repository: ${{ steps.meta.outputs.repository }}
       repository_name: ${{ steps.meta.outputs.repository_name }}
-      build_options_json: ${{ steps.build_options.outputs.build_options_json }}
-      build_options_display: ${{ steps.build_options.outputs.build_options_display }}
+      build_options_json: ${{ steps.signing.outputs.build_options_json }}
+      build_options_display: ${{ steps.signing.outputs.build_options_display }}
+      signing_requested: ${{ steps.signing.outputs.signing_requested }}
+      signing_config_detected: ${{ steps.signing.outputs.signing_config_detected }}
+      signing_config_sources: ${{ steps.signing.outputs.signing_config_sources }}
+      effective_signing: ${{ steps.signing.outputs.effective_signing }}
+      unsigned_scope: ${{ steps.signing.outputs.unsigned_scope }}
+      unsigned_reason: ${{ steps.signing.outputs.unsigned_reason }}
       version_name: ${{ steps.version.outputs.version_name }}
       source_ref: ${{ steps.source.outputs.source_ref }}
       source_sha: ${{ steps.source.outputs.source_sha }}
@@ -482,10 +523,22 @@ jobs:
             echo "build_options_display=$build_options_display"
           } >> "$GITHUB_OUTPUT"
           if [ -n "$build_options_display" ]; then
-            echo "Normalized build options: $build_options_display"
+            echo "Normalized build options before signing policy: $build_options_display"
           else
-            echo "Normalized build options: (none)"
+            echo "Normalized build options before signing policy: (none)"
           fi
+
+      - name: Resolve signing policy and final Gradle options
+        id: signing
+        shell: bash
+        working-directory: source
+        env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          BUILD_OPTIONS_JSON: ${{ steps.build_options.outputs.build_options_json }}
+          SIGNING_INPUT: ${{ inputs.signing }}
+        run: |
+          set -euo pipefail
+          python3 "$CI_HELPERS_DIR/resolve-signing.py"
 
       - name: Print resolved workflow inputs
         shell: bash
@@ -502,8 +555,14 @@ jobs:
           RESOLVED_BUILD_TEST: ${{ inputs.build_test }}
           RESOLVED_UPLOAD_RELEASE: ${{ inputs.upload_release }}
           RESOLVED_BUILD_OPTIONS: ${{ inputs.build_options }}
-          NORMALIZED_BUILD_OPTIONS: ${{ steps.build_options.outputs.build_options_display }}
-          RESOLVED_BUILD_OPTIONS_JSON: ${{ steps.build_options.outputs.build_options_json }}
+          NORMALIZED_BUILD_OPTIONS: ${{ steps.signing.outputs.build_options_display }}
+          RESOLVED_BUILD_OPTIONS_JSON: ${{ steps.signing.outputs.build_options_json }}
+          RESOLVED_SIGNING: ${{ inputs.signing }}
+          RESOLVED_SIGNING_CONFIG_DETECTED: ${{ steps.signing.outputs.signing_config_detected }}
+          RESOLVED_SIGNING_CONFIG_SOURCES: ${{ steps.signing.outputs.signing_config_sources }}
+          RESOLVED_EFFECTIVE_SIGNING: ${{ steps.signing.outputs.effective_signing }}
+          RESOLVED_UNSIGNED_SCOPE: ${{ steps.signing.outputs.unsigned_scope }}
+          RESOLVED_UNSIGNED_REASON: ${{ steps.signing.outputs.unsigned_reason }}
           RESOLVED_PRE_BUILD_COMMAND: ${{ inputs.pre_build_command }}
           RESOLVED_GO_VERSION: ${{ inputs.go_version }}
           REQUESTED_MODULE: ${{ inputs.module }}
@@ -564,8 +623,14 @@ jobs:
           add_input_row(rows, "build_flavor", value("REQUESTED_BUILD_FLAVOR"))
           add_input_row(rows, "build_type", value("REQUESTED_BUILD_TYPE"))
           add_input_row(rows, "build_options", value("RESOLVED_BUILD_OPTIONS"))
-          add_input_row(rows, "normalized_build_options", value("NORMALIZED_BUILD_OPTIONS") or "(none)")
-          add_input_row(rows, "build_options_json", value("RESOLVED_BUILD_OPTIONS_JSON") or "[]")
+          add_input_row(rows, "base_gradle_options", value("NORMALIZED_BUILD_OPTIONS") or "(none)")
+          add_input_row(rows, "base_gradle_options_json", value("RESOLVED_BUILD_OPTIONS_JSON") or "[]")
+          add_input_row(rows, "signing", value("RESOLVED_SIGNING"))
+          add_input_row(rows, "effective_signing", value("RESOLVED_EFFECTIVE_SIGNING"))
+          add_input_row(rows, "unsigned_scope", value("RESOLVED_UNSIGNED_SCOPE"))
+          add_input_row(rows, "signing_config_detected", value("RESOLVED_SIGNING_CONFIG_DETECTED"))
+          add_input_row(rows, "signing_config_sources", value("RESOLVED_SIGNING_CONFIG_SOURCES") or "none")
+          add_input_row(rows, "unsigned_reason", value("RESOLVED_UNSIGNED_REASON"))
           add_input_row(rows, "pre_build_command", value("RESOLVED_PRE_BUILD_COMMAND"))
           add_input_row(rows, "go_version", value("RESOLVED_GO_VERSION"))
           add_input_row(rows, "build_test", value("RESOLVED_BUILD_TEST"))
@@ -614,8 +679,14 @@ jobs:
           print(f"  build_flavor input: {value('REQUESTED_BUILD_FLAVOR')}")
           print(f"  build_type input: {value('REQUESTED_BUILD_TYPE')}")
           print(f"  build_options: {value('RESOLVED_BUILD_OPTIONS')}")
-          print(f"  normalized build_options: {value('NORMALIZED_BUILD_OPTIONS') or '(none)'}")
-          print(f"  build_options_json: {value('RESOLVED_BUILD_OPTIONS_JSON') or '[]'}")
+          print(f"  base Gradle options: {value('NORMALIZED_BUILD_OPTIONS') or '(none)'}")
+          print(f"  base Gradle options JSON: {value('RESOLVED_BUILD_OPTIONS_JSON') or '[]'}")
+          print(f"  signing: {value('RESOLVED_SIGNING')}")
+          print(f"  effective signing: {value('RESOLVED_EFFECTIVE_SIGNING')}")
+          print(f"  unsigned scope: {value('RESOLVED_UNSIGNED_SCOPE')}")
+          print(f"  signing config detected: {value('RESOLVED_SIGNING_CONFIG_DETECTED')}")
+          print(f"  signing config sources: {value('RESOLVED_SIGNING_CONFIG_SOURCES') or 'none'}")
+          print(f"  unsigned reason: {value('RESOLVED_UNSIGNED_REASON')}")
           print(f"  pre_build_command: {value('RESOLVED_PRE_BUILD_COMMAND')}")
           print(f"  go_version: {value('RESOLVED_GO_VERSION')}")
           print(f"  build_test: {value('RESOLVED_BUILD_TEST')}")
@@ -670,79 +741,24 @@ jobs:
           path: ${{ env.CI_WORKFLOW_CHECKOUT_PATH }}
           persist-credentials: false
 
-      - name: Print runner info
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Runner label: ${{ inputs.os_version }}"
-          echo "Runner OS: ${RUNNER_OS:-unknown}"
-          echo "Runner architecture: ${RUNNER_ARCH:-unknown}"
-
-      - name: Setup JDK
-        uses: actions/setup-java@v5
+      - name: Prepare Android CI job
+        uses: ./.android-ci-workflow/.github/actions/android-ci-prepare
         with:
-          java-version: ${{ inputs.jdk_version }}
-          distribution: 'temurin'
-          cache: gradle
-
-      - name: Setup NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: ${{ inputs.ndk_version }}
-          add-to-path: true
-          link-to-sdk: true
-          local-cache: true
-
-      - name: Verify NDK toolchain
-        shell: bash
-        env:
-          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
-          REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
-        run: |
-          set -euo pipefail
-          bash "$CI_HELPERS_DIR/verify-ndk.sh"
-
-      - name: Resolve pre-build command
-        id: prebuild
-        shell: bash
-        env:
-          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
-          PRE_BUILD_COMMAND_INPUT: ${{ inputs.pre_build_command }}
-        run: |
-          set -euo pipefail
-          python3 "$CI_HELPERS_DIR/resolve-prebuild.py"
-
-      - name: Setup Go
-        if: ${{ steps.prebuild.outputs.uses_go == 'true' }}
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ inputs.go_version }}
-          cache: false
-
-      - name: Cache pre-build outputs
-        if: ${{ steps.prebuild.outputs.cache_path != '' }}
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.prebuild.outputs.cache_path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-${{ needs.setup-matrix.outputs.repository_name }}-${{ needs.setup-matrix.outputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
-
-      - name: Run pre-build command
-        if: ${{ steps.prebuild.outputs.needed == 'true' }}
-        shell: bash
-        env:
-          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
-          PRE_BUILD_COMMAND: ${{ steps.prebuild.outputs.command }}
-          PRE_BUILD_CACHE_PATH: ${{ steps.prebuild.outputs.cache_path }}
-          PRE_BUILD_MODE: ${{ steps.prebuild.outputs.mode }}
-        run: |
-          set -euo pipefail
-          bash "$CI_HELPERS_DIR/run-prebuild.sh"
+          helpers_dir: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          runner_label: ${{ inputs.os_version }}
+          jdk_version: ${{ inputs.jdk_version }}
+          ndk_version: ${{ inputs.ndk_version }}
+          pre_build_command: ${{ inputs.pre_build_command }}
+          go_version: ${{ inputs.go_version }}
+          repository_name: ${{ needs.setup-matrix.outputs.repository_name }}
+          source_sha: ${{ needs.setup-matrix.outputs.source_sha }}
 
       - name: Run gradle tests
         shell: bash
         env:
           CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           BUILD_OPTIONS_JSON: ${{ needs.setup-matrix.outputs.build_options_json }}
+          SIGNING_UNSIGNED_SCOPE: ${{ needs.setup-matrix.outputs.unsigned_scope }}
           GRADLE_TASK: build
         run: |
           set -euo pipefail
@@ -783,73 +799,17 @@ jobs:
           path: ${{ env.CI_WORKFLOW_CHECKOUT_PATH }}
           persist-credentials: false
 
-      - name: Print runner info
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "Runner label: ${{ inputs.os_version }}"
-          echo "Runner OS: ${RUNNER_OS:-unknown}"
-          echo "Runner architecture: ${RUNNER_ARCH:-unknown}"
-
-      - name: Setup JDK
-        uses: actions/setup-java@v5
+      - name: Prepare Android CI job
+        uses: ./.android-ci-workflow/.github/actions/android-ci-prepare
         with:
-          java-version: ${{ inputs.jdk_version }}
-          distribution: 'temurin'
-          cache: gradle
-
-      - name: Setup NDK
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: ${{ inputs.ndk_version }}
-          add-to-path: true
-          link-to-sdk: true
-          local-cache: true
-
-      - name: Verify NDK toolchain
-        shell: bash
-        env:
-          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
-          REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
-        run: |
-          set -euo pipefail
-          bash "$CI_HELPERS_DIR/verify-ndk.sh"
-
-      - name: Resolve pre-build command
-        id: prebuild
-        shell: bash
-        env:
-          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
-          PRE_BUILD_COMMAND_INPUT: ${{ inputs.pre_build_command }}
-        run: |
-          set -euo pipefail
-          python3 "$CI_HELPERS_DIR/resolve-prebuild.py"
-
-      - name: Setup Go
-        if: ${{ steps.prebuild.outputs.uses_go == 'true' }}
-        uses: actions/setup-go@v6
-        with:
-          go-version: ${{ inputs.go_version }}
-          cache: false
-
-      - name: Cache pre-build outputs
-        if: ${{ steps.prebuild.outputs.cache_path != '' }}
-        uses: actions/cache@v5
-        with:
-          path: ${{ steps.prebuild.outputs.cache_path }}
-          key: ${{ runner.os }}-${{ runner.arch }}-${{ needs.setup-matrix.outputs.repository_name }}-${{ needs.setup-matrix.outputs.source_sha }}-prebuild-${{ inputs.ndk_version }}-${{ inputs.go_version }}-${{ hashFiles('run', 'buildScript/**', 'libcore/**') }}
-
-      - name: Run pre-build command
-        if: ${{ steps.prebuild.outputs.needed == 'true' }}
-        shell: bash
-        env:
-          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
-          PRE_BUILD_COMMAND: ${{ steps.prebuild.outputs.command }}
-          PRE_BUILD_CACHE_PATH: ${{ steps.prebuild.outputs.cache_path }}
-          PRE_BUILD_MODE: ${{ steps.prebuild.outputs.mode }}
-        run: |
-          set -euo pipefail
-          bash "$CI_HELPERS_DIR/run-prebuild.sh"
+          helpers_dir: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          runner_label: ${{ inputs.os_version }}
+          jdk_version: ${{ inputs.jdk_version }}
+          ndk_version: ${{ inputs.ndk_version }}
+          pre_build_command: ${{ inputs.pre_build_command }}
+          go_version: ${{ inputs.go_version }}
+          repository_name: ${{ needs.setup-matrix.outputs.repository_name }}
+          source_sha: ${{ needs.setup-matrix.outputs.source_sha }}
 
       - name: Validate build target
         shell: bash
@@ -877,7 +837,10 @@ jobs:
         env:
           CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           BUILD_OPTIONS_JSON: ${{ needs.setup-matrix.outputs.build_options_json }}
+          SIGNING_UNSIGNED_SCOPE: ${{ needs.setup-matrix.outputs.unsigned_scope }}
           GRADLE_TASK: ${{ matrix.module }}:${{ matrix.gradle_task }}
+          CI_BUILD_TYPE: ${{ matrix.build_type }}
+          CI_ARTIFACT_TYPE: ${{ matrix.artifact_type }}
         run: |
           set -euo pipefail
           bash "$CI_HELPERS_DIR/run-gradle.sh"
