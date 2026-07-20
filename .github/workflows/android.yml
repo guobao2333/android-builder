@@ -147,7 +147,7 @@ jobs:
       source_short_sha: ${{ steps.source.outputs.source_short_sha }}
     steps:
       - name: Checkout workflow helper scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository }}
           ref: ${{ github.sha }}
@@ -156,7 +156,7 @@ jobs:
 
       - name: Checkout target repository at requested ref
         if: ${{ inputs.branch != '' }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.repository || github.repository }}
           ref: ${{ inputs.branch }}
@@ -166,7 +166,7 @@ jobs:
 
       - name: Checkout target repository at default branch
         if: ${{ inputs.branch == '' }}
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ inputs.repository || github.repository }}
           path: source
@@ -570,7 +570,7 @@ jobs:
     runs-on: ${{ inputs.os_version }}
     steps:
       - name: Checkout resolved target source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ needs.setup-matrix.outputs.repository }}
           ref: ${{ needs.setup-matrix.outputs.source_sha }}
@@ -589,7 +589,7 @@ jobs:
           echo "Check that CHECKOUT_TOKEN has read access to the target repository and its recursive submodules."
 
       - name: Checkout workflow helper scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository }}
           ref: ${{ github.sha }}
@@ -628,7 +628,7 @@ jobs:
 
     steps:
       - name: Checkout resolved target source
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ needs.setup-matrix.outputs.repository }}
           ref: ${{ needs.setup-matrix.outputs.source_sha }}
@@ -647,7 +647,7 @@ jobs:
           echo "Check that CHECKOUT_TOKEN has read access to the target repository and its recursive submodules."
 
       - name: Checkout workflow helper scripts
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           repository: ${{ github.repository }}
           ref: ${{ github.sha }}
