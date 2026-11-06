@@ -60,7 +60,7 @@ runs:
         distribution: temurin
 
     - name: Setup Gradle Wrapper
-      if: ${{ inputs.gradle_install_mode == 'wrapper' }}
+      if: ${{ inputs.use_gradle_wrapper == 'true' && inputs.gradle_install_mode == 'wrapper' }}
       uses: gradle/actions/setup-gradle@v6
       with:
         cache-provider: basic
