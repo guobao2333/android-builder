@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -20,13 +21,14 @@ class ResolveToolchainTest(unittest.TestCase):
         files: dict[str, str],
         gradle: str = "auto",
         jdk: str = "auto",
+        expected_returncode: int = 0,
     ) -> dict[str, str]:
         with tempfile.TemporaryDirectory(prefix="android-ci-toolchain-") as tmp:
             root = Path(tmp)
             for relative, text in files.items():
                 path = root / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(text, encoding="utf-8")
+                path.write_text(textwrap.dedent(text), encoding="utf-8")
 
             output = root / "github-output.txt"
             env = os.environ.copy()
@@ -45,7 +47,9 @@ class ResolveToolchainTest(unittest.TestCase):
                 stderr=subprocess.STDOUT,
                 check=False,
             )
-            self.assertEqual(proc.returncode, 0, proc.stdout)
+            self.assertEqual(proc.returncode, expected_returncode, proc.stdout)
+            if proc.returncode != 0:
+                return {"__stdout__": proc.stdout}
             values: dict[str, str] = {}
             for line in output.read_text(encoding="utf-8").splitlines():
                 key, separator, value = line.partition("=")
@@ -117,6 +121,47 @@ class ResolveToolchainTest(unittest.TestCase):
         self.assertEqual(values["agp_version"], "8.2.0")
         self.assertEqual(values["resolved_gradle_version"], "8.2")
         self.assertEqual(values["resolved_jdk_version"], "17")
+
+    def test_unknown_agp_has_an_explicit_status(self) -> None:
+        values = self.run_resolver({
+            "build.gradle": """
+                plugins {
+                    id 'com.android.application' version 'unknown' apply false
+                }
+            """,
+        })
+        self.assertEqual(values["agp_version"], "unknown")
+        self.assertEqual(values["agp_detection_status"], "unknown")
+        self.assertEqual(values["wrapper_detection_status"], "not-present")
+        self.assertEqual(values["gradle_version_status"], "known")
+        self.assertEqual(values["resolved_gradle_version"], "8.14.3")
+        self.assertEqual(values["resolved_jdk_version"], "17")
+        self.assertEqual(values["toolchain_compatibility_status"], "partial")
+
+    def test_unknown_wrapper_and_unknown_agp_require_manual_jdk(self) -> None:
+        values = self.run_resolver({
+            "gradlew": "#!/bin/sh\\n",
+        }, expected_returncode=1)
+        self.assertIn("AGP and Gradle versions are both unknown", values["__stdout__"])
+
+    def test_unknown_wrapper_uses_agp_minimum_and_marks_partial(self) -> None:
+        values = self.run_resolver({
+            "build.gradle": """
+                buildscript {
+                    dependencies {
+                        classpath 'com.android.tools.build:gradle:3.0.0'
+                    }
+                }
+            """,
+            "gradlew": "#!/bin/sh\\n",
+        })
+        self.assertEqual(values["agp_detection_status"], "detected")
+        self.assertEqual(values["wrapper_detection_status"], "unknown")
+        self.assertEqual(values["gradle_version_status"], "unknown")
+        self.assertEqual(values["resolved_gradle_version"], "unknown")
+        self.assertEqual(values["resolved_jdk_version"], "8")
+        self.assertEqual(values["gradle_install_mode"], "unknown-wrapper")
+        self.assertEqual(values["toolchain_compatibility_status"], "partial")
 
     def test_builtin_fallback_and_manual_override(self) -> None:
         fallback = self.run_resolver({})
