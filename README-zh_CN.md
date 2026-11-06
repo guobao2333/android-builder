@@ -257,7 +257,7 @@ summary 包含：
 - Source SHA。
 - module、flavor、build type、原始 build options、基础 Gradle options、按任务签名决策、unsigned scope、pre-build command 和 Go 版本。
 - build/test/release 选项。
-- Runner label、JDK、请求的 NDK、解析出的 NDK revision 和 `ANDROID_NDK_HOME`。
+- Runner label、JDK、请求的 NDK、解析出的 NDK revision、`ANDROID_NDK_HOME`、Gradle CLI 兜底版本和 submodule 模式。
 - version name。
 - 最终 build matrix：module、flavor、build type、artifact type、Gradle task 和 artifact name。
 
