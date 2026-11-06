@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from collections.abc import Mapping
 from typing import Any
@@ -93,8 +94,68 @@ def load_matrix_entries() -> list[dict[str, Any]]:
     return entries
 
 
+def mermaid_escape(raw: Any) -> str:
+    value = re.sub(r"[\r\n]+", " ", display_value(raw))
+    return value.replace('"', "'").replace("[", "").replace("]", "").replace("(", "").replace(")", "")
+
+
+def build_flowchart(fields: list[tuple[str, str]], entries: list[dict[str, Any]]) -> list[str]:
+    data = dict(fields)
+    repository = mermaid_escape(data.get("repository", "target repository"))
+    modules = sorted({mermaid_escape(item.get("module", "")) for item in entries})
+    module_label = ", ".join(module for module in modules if module) or mermaid_escape(data.get("module", "auto"))
+    if len(module_label) > 70:
+        module_label = module_label[:67] + "..."
+    task_names = list(dict.fromkeys(
+        mermaid_escape(item.get("gradle_task", "")) for item in entries if item.get("gradle_task")
+    ))
+    task_label = ", ".join(task_names[:3]) or "no tasks"
+    if len(task_names) > 3:
+        task_label += f" +{len(task_names) - 3}"
+    if len(task_label) > 90:
+        task_label = task_label[:87] + "..."
+    artifact_types = sorted({
+        mermaid_escape(item.get("artifact_type", "")).upper()
+        for item in entries if item.get("artifact_type")
+    })
+    artifact_label = "/".join(artifact_types) or "APK/AAB"
+    agp = mermaid_escape(data.get("agp_version", "unknown"))
+    gradle = mermaid_escape(data.get("gradle_version", "unknown"))
+    jdk = mermaid_escape(data.get("jdk_version", "unknown"))
+    build_type = mermaid_escape(data.get("build_type", "unknown"))
+    submodules = mermaid_escape(data.get("checkout_submodules", "recursive"))
+    flow = [
+        "### Workflow graph",
+        "",
+        chr(96) * 3 + "mermaid",
+        "flowchart LR",
+        f'  checkout["Checkout<br/>{repository}<br/>submodules: {submodules}"]',
+        f'  toolchain["Toolchain<br/>AGP: {agp}<br/>Gradle: {gradle}<br/>JDK: {jdk}"]',
+        f'  discover["Discover<br/>{module_label}<br/>{build_type} · {len(entries)} variant(s)"]',
+    ]
+    if data.get("build_test") == "true":
+        flow.append('  test["Test<br/>gradle build"]')
+    flow.extend([
+        f'  build["Build matrix<br/>{task_label}<br/>Gradle {gradle} · JDK {jdk}"]',
+        f'  artifacts["Upload artifacts<br/>{artifact_label} · {len(entries)} item(s)"]',
+    ])
+    if data.get("upload_release") == "true":
+        flow.append('  release["Publish<br/>GitHub Release"]')
+    flow.append("  checkout --> toolchain --> discover")
+    if data.get("build_test") == "true":
+        flow.append("  discover --> test --> build")
+    else:
+        flow.append("  discover --> build")
+    flow.append("  build --> artifacts")
+    if data.get("upload_release") == "true":
+        flow.append("  artifacts --> release")
+    flow.extend([chr(96) * 3, ""])
+    return flow
+
+
 def build_summary(fields: list[tuple[str, str]], entries: list[dict[str, Any]]) -> str:
     rows = [
+        *build_flowchart(fields, entries),
         "### Resolved manual workflow inputs",
         "",
         "| Input | Final value used |",
