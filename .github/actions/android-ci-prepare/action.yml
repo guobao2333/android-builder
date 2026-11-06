@@ -94,6 +94,7 @@ runs:
         set -euo pipefail
         if [ ! -x "$GRADLE_INSTALL_DIR/bin/gradle" ]; then
           mkdir -p "$(dirname "$GRADLE_INSTALL_DIR")"
+          rm -rf "$GRADLE_INSTALL_DIR"
           archive="$RUNNER_TEMP/gradle-$GRADLE_VERSION-bin.zip"
           extract_dir="$RUNNER_TEMP/gradle-extract-$GRADLE_VERSION"
           curl --fail --location --retry 3 --retry-delay 2 \
