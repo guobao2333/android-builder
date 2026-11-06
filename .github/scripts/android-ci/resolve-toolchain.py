@@ -131,7 +131,7 @@ def catalog_agp_versions(text: str) -> list[str]:
     """Read AGP plugin aliases from a Gradle version catalog."""
 
     version_section = re.search(
-        r"(?ms)^[ \\t]*\\[versions\\][ \\t]*(.*?)(?=^[ \\t]*\\[|\\Z)",
+        r"(?ms)^[ \t]*\[versions\][ \t]*(.*?)(?=^[ \t]*\[|\Z)",
         text,
     )
     if not version_section:
@@ -140,13 +140,13 @@ def catalog_agp_versions(text: str) -> list[str]:
     versions = {
         match.group(1): match.group(2)
         for match in re.finditer(
-            r"(?m)^[ \\t]*([A-Za-z0-9_.-]+)[ \\t]*=[ \\t]*['\\"]([^'\\"]+)['\\"]",
+            r"(?m)^[ \t]*([A-Za-z0-9_.-]+)[ \t]*=[ \t]*['\"]([^'\"]+)['\"]",
             version_section.group(1),
         )
     }
 
     plugin_section = re.search(
-        r"(?ms)^[ \\t]*\\[plugins\\][ \\t]*(.*?)(?=^[ \\t]*\\[|\\Z)",
+        r"(?ms)^[ \t]*\[plugins\][ \t]*(.*?)(?=^[ \t]*\[|\Z)",
         text,
     )
     if not plugin_section:
@@ -154,15 +154,15 @@ def catalog_agp_versions(text: str) -> list[str]:
 
     found: list[str] = []
     entry_pattern = re.compile(
-        r"(?ms)^[ \\t]*[A-Za-z0-9_.-]+[ \\t]*=[ \\t]*\\{(.*?)\\}"
+        r"(?ms)^[ \t]*[A-Za-z0-9_.-]+[ \t]*=[ \t]*\{(.*?)\}"
     )
     for entry in entry_pattern.finditer(plugin_section.group(1)):
         body = entry.group(1)
-        if not re.search(r"\\bid[ \\t]*=[ \\t]*['\\"]com\\.android\\.", body):
+        if not re.search(r"\bid[ \t]*=[ \t]*['\"]com\.android\.", body):
             continue
 
         reference = re.search(
-            r"version\\.ref[ \\t]*=[ \\t]*['\\"]([^'\\"]+)['\\"]",
+            r"version\.ref[ \t]*=[ \t]*['\"]([^'\"]+)['\"]",
             body,
         )
         if reference and reference.group(1) in versions:
@@ -170,14 +170,13 @@ def catalog_agp_versions(text: str) -> list[str]:
             continue
 
         literal = re.search(
-            r"version[ \\t]*=[ \\t]*['\\"]([^'\\"]+)['\\"]",
+            r"version[ \t]*=[ \t]*['\"]([^'\"]+)['\"]",
             body,
         )
         if literal:
             found.append(literal.group(1))
 
     return found
-
 
 def detect_agp_versions(files: list[Path], variables: dict[str, str]) -> list[str]:
     coordinate = re.compile(r"com\.android\.tools\.build:gradle:([^:'\"\s)]+)")
