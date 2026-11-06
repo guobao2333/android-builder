@@ -147,8 +147,12 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       agp_version: ${{ steps.toolchain.outputs.agp_version }}
+      agp_detection_status: ${{ steps.toolchain.outputs.agp_detection_status }}
       agp_required_gradle: ${{ steps.toolchain.outputs.agp_required_gradle }}
       wrapper_gradle_version: ${{ steps.toolchain.outputs.wrapper_gradle_version }}
+      wrapper_detection_status: ${{ steps.toolchain.outputs.wrapper_detection_status }}
+      gradle_version_status: ${{ steps.toolchain.outputs.gradle_version_status }}
+      toolchain_compatibility_status: ${{ steps.toolchain.outputs.toolchain_compatibility_status }}
       resolved_gradle_version: ${{ steps.toolchain.outputs.resolved_gradle_version }}
       gradle_source: ${{ steps.toolchain.outputs.gradle_source }}
       gradle_install_mode: ${{ steps.toolchain.outputs.gradle_install_mode }}
@@ -630,8 +634,12 @@ jobs:
               "gradle_version": ${{ toJson(steps.toolchain.outputs.resolved_gradle_version) }},
               "gradle_source": ${{ toJson(steps.toolchain.outputs.gradle_source) }},
               "agp_version": ${{ toJson(steps.toolchain.outputs.agp_version) }},
+              "agp_detection_status": ${{ toJson(steps.toolchain.outputs.agp_detection_status) }},
               "agp_required_gradle": ${{ toJson(steps.toolchain.outputs.agp_required_gradle) }},
               "wrapper_gradle_version": ${{ toJson(steps.toolchain.outputs.wrapper_gradle_version) }},
+              "wrapper_detection_status": ${{ toJson(steps.toolchain.outputs.wrapper_detection_status) }},
+              "gradle_version_status": ${{ toJson(steps.toolchain.outputs.gradle_version_status) }},
+              "toolchain_compatibility_status": ${{ toJson(steps.toolchain.outputs.toolchain_compatibility_status) }},
               "gradle_install_mode": ${{ toJson(steps.toolchain.outputs.gradle_install_mode) }},
               "toolchain_warning": ${{ toJson(steps.toolchain.outputs.toolchain_warning) }},
               "version_name": ${{ toJson(steps.version.outputs.version_name) }},
