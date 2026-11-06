@@ -120,9 +120,12 @@ def build_flowchart(fields: list[tuple[str, str]], entries: list[dict[str, Any]]
     })
     artifact_label = "/".join(artifact_types) or "APK/AAB"
     agp = mermaid_escape(data.get("agp_version", "unknown"))
+    agp_status = mermaid_escape(data.get("agp_detection_status", "unknown"))
     gradle = mermaid_escape(data.get("gradle_version", "unknown"))
+    gradle_status = mermaid_escape(data.get("gradle_version_status", "unknown"))
     gradle_source = mermaid_escape(data.get("gradle_source", "unknown"))
     jdk = mermaid_escape(data.get("jdk_version", "unknown"))
+    compatibility = mermaid_escape(data.get("toolchain_compatibility_status", "unknown"))
     build_type = mermaid_escape(data.get("build_type", "unknown"))
     submodules = mermaid_escape(data.get("checkout_submodules", "recursive"))
     flow = [
@@ -131,7 +134,7 @@ def build_flowchart(fields: list[tuple[str, str]], entries: list[dict[str, Any]]
         chr(96) * 3 + "mermaid",
         "flowchart LR",
         f'  checkout["Checkout<br/>{repository}<br/>submodules: {submodules}"]',
-        f'  toolchain["Toolchain<br/>AGP: {agp}<br/>Gradle: {gradle} ({gradle_source})<br/>JDK: {jdk}"]',
+        f'  toolchain["Toolchain<br/>AGP: {agp} ({agp_status})<br/>Gradle: {gradle} ({gradle_status}; {gradle_source})<br/>JDK: {jdk}<br/>Compatibility: {compatibility}"]',
         f'  discover["Discover<br/>{module_label}<br/>{build_type} · {len(entries)} variant(s)"]',
     ]
     if data.get("build_test") == "true":
