@@ -644,7 +644,7 @@ jobs:
 
 
   test:
-    name: "Test • Gradle ${{ needs.setup-matrix.outputs.resolved_gradle_version }} • JDK ${{ needs.setup-matrix.outputs.resolved_jdk_version }}"
+    name: "Test • AGP ${{ needs.setup-matrix.outputs.agp_version }} • Gradle ${{ needs.setup-matrix.outputs.resolved_gradle_version }} • JDK ${{ needs.setup-matrix.outputs.resolved_jdk_version }}"
     if: ${{ inputs.build_test }}
     needs: setup-matrix
     runs-on: ${{ inputs.os_version }}
@@ -713,7 +713,7 @@ jobs:
           bash "$CI_HELPERS_DIR/run-gradle.sh"
 
   build:
-    name: "Build • ${{ matrix.module }} • ${{ matrix.gradle_task }} • Gradle ${{ needs.setup-matrix.outputs.resolved_gradle_version }} • JDK ${{ needs.setup-matrix.outputs.resolved_jdk_version }}"
+    name: "Build • ${{ matrix.module }} • ${{ matrix.gradle_task }} • AGP ${{ needs.setup-matrix.outputs.agp_version }} • Gradle ${{ needs.setup-matrix.outputs.resolved_gradle_version }} • JDK ${{ needs.setup-matrix.outputs.resolved_jdk_version }}"
     needs: setup-matrix
     runs-on: ${{ inputs.os_version }}
     strategy:
