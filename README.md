@@ -114,6 +114,8 @@ The workflow resolves the Android toolchain before invoking Gradle:
 2. Without a Wrapper declaration, the workflow detects AGP from buildscript classpaths, plugin DSL declarations, Gradle properties/variables, and `gradle/*.versions.toml` catalogs. It selects the minimum Gradle version from Android's compatibility table.
 3. If neither AGP nor Wrapper metadata can be detected, `gradle_version=auto` uses the built-in default `8.14.3`. A manual `gradle_version` selection is only a fallback override; it does not rewrite a project's Wrapper.
 4. `jdk_version=auto` selects a JDK compatible with both the selected Gradle runtime range and the AGP minimum. You can still force a JDK, but incompatible selections are reported as warnings.
+5. Detection states are `detected`, `unknown`, and `not-present`. If `gradlew` exists but its Wrapper Gradle version cannot be read, automatic JDK selection stops and requires an explicit `jdk_version`; you can also set `gradle_version` manually to bypass the unknown Wrapper and use the CLI.
+6. When both AGP and Wrapper versions are unknown, compatibility is never reported as verified, and unknown values are never used in version comparisons.
 
 The built-in Gradle fallback menu includes representative releases from Gradle 2.x through 9.x: `2.10`, `2.14.1`, `3.3`, `3.5`, `4.1`, `4.10.3`, `5.6.4`, `6.9.4`, `7.0`, `7.6.4`, `8.0`, `8.2`, `8.4`, `8.6`, `8.7`, `8.9`, `8.11.1`, `8.14.3`, `9.1.0`, `9.4.0`, and `9.6.0`. AGP auto-detection can choose an exact minimum version outside this menu when required.
 
