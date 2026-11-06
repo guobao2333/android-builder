@@ -22,7 +22,7 @@ The workflow defined in `android.yml`:
 - Reads `gradle.properties` for `versionName`, `VERSION_NAME`, or `version`; if none is found, the GitHub run number is used as `version_name`.
 - Uses Gradle task introspection to detect Android application modules and real build variants.
 - Builds matching variants through a matrix.
-- Optionally runs a full `Gradle build` test job before the build matrix.
+- Optionally runs a full `gradle build` test job before the build matrix.
 - Optionally runs a pre-build shell command, including an auto mode for NekoBox-style `libcore` builds.
 - Uploads APK / AAB files as GitHub Actions artifacts.
 - Optionally publishes a GitHub Release in the repository that runs this workflow.
@@ -71,11 +71,11 @@ Shared helper responsibilities:
 | **module** | Target module(s), comma-separated. Use values such as `app` or `:app`. If empty, the workflow auto-detects installable Android application modules. | `string` | `app` |
 | **build_flavor** | Build flavor filter(s), comma-separated. Leave empty to accept all flavors. Matching is normalized and substring-based. | `string` | empty |
 | **build_type** | Build output selector. | choice: `debug`, `release`, `aab`, `all` | `debug` |
-| **build_options** | Extra Gradle arguments appended to `Gradle build` and build tasks. Accepts shell-style quoting or a JSON array of strings. | `string` | empty |
+| **build_options** | Extra Gradle arguments appended to `gradle build` and build tasks. Accepts shell-style quoting or a JSON array of strings. | `string` | empty |
 | **signing** | Whether release signing is allowed. Defaults to disabled; release/AAB tasks use `-Punsigned` unless a complete signing config is detected. Debug tasks keep Gradle/Android's default debug signing and only retry with `-Punsigned` after a signing-related failure. | `boolean` | `false` |
 | **pre_build_command** | Pre-build command before Gradle. Use `auto`, `none`, `skip`, or a custom shell command. | `string` | `auto` |
 | **go_version** | Go version passed to `actions/setup-go` when the pre-build command needs Go. | `string` | `^1.25` |
-| **build_test** | Run a separate `Gradle build` job before the build matrix. | `boolean` | `false` |
+| **build_test** | Run a separate `gradle build` job before the build matrix. | `boolean` | `false` |
 | **upload_release** | Publish a GitHub Release after successful builds. | `boolean` | `false` |
 | **os_version** | Runner image for test/build jobs. `setup-matrix` and `release` stay on `ubuntu-latest`. | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
 | **jdk_version** | Temurin JDK version. | choice: `26`, `25`, `24`, `23`, `22`, `21`, `17`, `11`, `8` | `21` |
@@ -338,8 +338,8 @@ Example payload:
     "os_version": "ubuntu-latest",
     "jdk_version": "21",
     "ndk_version": "r27d",
-  "gradle_version": "8.14.3",
-  "submodules": "recursive"
+    "gradle_version": "8.14.3",
+    "submodules": "recursive"
   }
 }
 ```
