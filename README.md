@@ -78,9 +78,9 @@ Shared helper responsibilities:
 | **build_test** | Run a separate `gradle build` job before the build matrix. | `boolean` | `false` |
 | **upload_release** | Publish a GitHub Release after successful builds. | `boolean` | `false` |
 | **os_version** | Runner image for test/build jobs. `setup-matrix` and `release` stay on `ubuntu-latest`. | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
-| **jdk_version** | Temurin JDK version. | choice: `26`, `25`, `24`, `23`, `22`, `21`, `17`, `11`, `8` | `21` |
+| **jdk_version** | JDK version. `auto` selects a JDK compatible with the detected AGP and Gradle versions; a number overrides it. | choice: `auto`, `8`, `11`, `17`, `21`, `25`, `26`, `27` | `auto` |
 | **ndk_version** | Android NDK alias. | choice: `r29`, `r28c`, `r27d`, `r26d`, `r25c`, `r24`, `r23c`, `r22b`, `r21e`, `r20b` | `r27d` |
-| **gradle_version** | Gradle CLI version installed for projects without `gradlew`. It does not override the version selected by an existing Wrapper. | `string` | `8.14.3` |
+| **gradle_version** | `auto` uses the Wrapper declaration when present, otherwise the detected AGP minimum; if neither is available it uses `8.14.3`. Manual selection applies only when no Wrapper declaration exists. | choice: `auto`, `2.10`, `2.14.1`, `3.3`, `3.5`, `4.1`, `4.10.3`, `5.6.4`, `6.9.4`, `7.0`, `7.6.4`, `8.0`, `8.2`, `8.4`, `8.6`, `8.7`, `8.9`, `8.11.1`, `8.14.3`, `9.1.0`, `9.4.0`, `9.6.0` | `auto` |
 
 ## Runner behavior
 
@@ -106,15 +106,22 @@ The NDK verification helper detects the host OS and checks the matching NDK tool
 Pre-build cache keys include `runner.os`, `runner.arch`, repository name, source SHA, requested NDK, Go version, and a runtime SHA256 over `run`, `buildScript`, and `libcore`. This avoids using `hashFiles(...)` inside the composite action and prevents macOS Intel, macOS arm64, and Linux runs from sharing incompatible cached outputs.
 
 
-## Gradle command selection
+## Gradle and JDK compatibility
 
-The workflow prefers the target project's Gradle Wrapper:
+The workflow resolves the Android toolchain before invoking Gradle:
 
-- If `./gradlew` exists, it is made executable and used for module discovery, task inspection, tests, and builds.
-- If `./gradlew` is missing, the workflow uses the `gradle` CLI installed by `gradle/actions/setup-gradle`.
-- `gradle_version` controls only this CLI fallback. The default is `8.14.3`; change it when the target project's Android Gradle Plugin or JDK requires another Gradle version.
+1. A checked-in `gradlew` script and its `gradle-wrapper.properties` declaration take priority. When the script is absent but the properties file exists, the declared distribution is installed as a CLI instead of jumping to the latest Gradle.
+2. Without a Wrapper declaration, the workflow detects AGP from buildscript classpaths, plugin DSL declarations, Gradle properties/variables, and `gradle/*.versions.toml` catalogs. It selects the minimum Gradle version from Android's compatibility table.
+3. If neither AGP nor Wrapper metadata can be detected, `gradle_version=auto` uses the built-in default `8.14.3`. A manual `gradle_version` selection is only a fallback override; it does not rewrite a project's Wrapper.
+4. `jdk_version=auto` selects a JDK compatible with both the selected Gradle runtime range and the AGP minimum. You can still force a JDK, but incompatible selections are reported as warnings.
 
-The workflow does not generate or commit Wrapper files into the target repository.
+The built-in Gradle fallback menu includes representative releases from Gradle 2.x through 9.x: `2.10`, `2.14.1`, `3.3`, `3.5`, `4.1`, `4.10.3`, `5.6.4`, `6.9.4`, `7.0`, `7.6.4`, `8.0`, `8.2`, `8.4`, `8.6`, `8.7`, `8.9`, `8.11.1`, `8.14.3`, `9.1.0`, `9.4.0`, and `9.6.0`. AGP auto-detection can choose an exact minimum version outside this menu when required.
+
+Gradle versions below 6.0 use a legacy distribution/cache path to avoid relying on modern Gradle setup instrumentation. Wrapper files are never rewritten or generated in the target repository.
+
+## Workflow graph and summary
+
+The Actions visualization uses informative job names: the setup node identifies the target and module filter, while Test/Build nodes show the resolved Gradle and JDK versions (Build nodes also show the module and task). The GitHub Job Summary adds a Mermaid graph with AGP, Gradle, JDK, module/variant count, selected tasks, and artifact types. The detailed resolved-input and matrix tables remain below the graph.
 
 ## Build type behavior
 
@@ -381,7 +388,7 @@ gh workflow run android.yml \
 - Target branch, tag, or SHA not found.
 - Private repository or submodule requires a `CHECKOUT_TOKEN` that can read every target and submodule repository.
 - A submodule remains uninitialized or points at an unavailable commit; inspect `.gitmodules` URLs and the `CHECKOUT_TOKEN` permissions.
-- A wrapperless project needs a different `gradle_version` for its Android Gradle Plugin/JDK combination.
+- An unusual or unsupported AGP declaration may need an explicit `gradle_version` fallback and/or `jdk_version` override.
 - Module name typo or module does not exist in Gradle's `projects` output.
 - Requested module is not an installable Android application module.
 - Requested flavor/build type combination does not exist.
