@@ -31,3 +31,4 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/scripts/android-ci/tests/test-resolve-toolchain.py
+          python3 .github/scripts/android-ci/tests/test-resolve-ndk.py
