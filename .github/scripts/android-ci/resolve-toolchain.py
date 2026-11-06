@@ -92,8 +92,8 @@ def parse_variables(files: list[Path]) -> dict[str, str]:
     values: dict[str, str] = {}
     property_re = re.compile(r"^\s*([A-Za-z0-9_.-]+)\s*=\s*(.*?)\s*$")
     patterns = (
-        re.compile(r"(?m)\b(?:ext\.)?([A-Za-z0-9_]*(?:agp|androidGradlePlugin)[A-Za-z0-9_]*)\s*=\s*['\"]([^'\"]+)['\"]", re.I),
-        re.compile(r"(?m)\b(?:val|def)\s+([A-Za-z0-9_]*(?:agp|androidGradlePlugin)[A-Za-z0-9_]*)\s*=\s*['\"]([^'\"]+)['\"]", re.I),
+        re.compile(r"(?m)\b(?:ext\.)?([A-Za-z0-9_]*(?:agp|androidGradlePlugin|android[_-]?plugin)[A-Za-z0-9_]*)\s*=\s*['\"]([^'\"]+)['\"]", re.I),
+        re.compile(r"(?m)\b(?:val|def)\s+([A-Za-z0-9_]*(?:agp|androidGradlePlugin|android[_-]?plugin)[A-Za-z0-9_]*)\s*=\s*['\"]([^'\"]+)['\"]", re.I),
     )
     for path in files:
         text = read_text(path)
@@ -334,10 +334,11 @@ def main() -> int:
         resolved_jdk = requested_jdk
         jdk_source = "manual selection"
         if int(resolved_jdk) < agp_min_jdk:
-            warnings.append(
-                f"Selected JDK {resolved_jdk} is below AGP {agp_version or 'unknown'} "
-                f"minimum Java {agp_min_jdk}."
-            )
+            if agp_version:
+                reason = f"below detected AGP {agp_version} minimum Java {agp_min_jdk}"
+            else:
+                reason = f"below the conservative Java {agp_min_jdk} baseline for Gradle {resolved_gradle}"
+            warnings.append(f"Selected JDK {resolved_jdk} is {reason}.")
         if not gradle_min_jdk <= int(resolved_jdk) <= gradle_max_jdk:
             warnings.append(
                 f"Selected JDK {resolved_jdk} is outside Gradle {resolved_gradle}'s "
