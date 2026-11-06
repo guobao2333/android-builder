@@ -121,6 +121,7 @@ def build_flowchart(fields: list[tuple[str, str]], entries: list[dict[str, Any]]
     artifact_label = "/".join(artifact_types) or "APK/AAB"
     agp = mermaid_escape(data.get("agp_version", "unknown"))
     gradle = mermaid_escape(data.get("gradle_version", "unknown"))
+    gradle_source = mermaid_escape(data.get("gradle_source", "unknown"))
     jdk = mermaid_escape(data.get("jdk_version", "unknown"))
     build_type = mermaid_escape(data.get("build_type", "unknown"))
     submodules = mermaid_escape(data.get("checkout_submodules", "recursive"))
@@ -130,7 +131,7 @@ def build_flowchart(fields: list[tuple[str, str]], entries: list[dict[str, Any]]
         chr(96) * 3 + "mermaid",
         "flowchart LR",
         f'  checkout["Checkout<br/>{repository}<br/>submodules: {submodules}"]',
-        f'  toolchain["Toolchain<br/>AGP: {agp}<br/>Gradle: {gradle}<br/>JDK: {jdk}"]',
+        f'  toolchain["Toolchain<br/>AGP: {agp}<br/>Gradle: {gradle} ({gradle_source})<br/>JDK: {jdk}"]',
         f'  discover["Discover<br/>{module_label}<br/>{build_type} · {len(entries)} variant(s)"]',
     ]
     if data.get("build_test") == "true":
