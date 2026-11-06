@@ -143,6 +143,18 @@ class ResolveToolchainTest(unittest.TestCase):
             "gradlew": "#!/bin/sh\\n",
         }, expected_returncode=1)
         self.assertIn("AGP and Gradle versions are both unknown", values["__stdout__"])
+        self.assertNotIn("ValueError", values["__stdout__"])
+
+    def test_unknown_versions_allow_explicit_jdk(self) -> None:
+        values = self.run_resolver({
+            "gradlew": "#!/bin/sh\\n",
+        }, jdk="17")
+        self.assertEqual(values["agp_detection_status"], "unknown")
+        self.assertEqual(values["wrapper_detection_status"], "unknown")
+        self.assertEqual(values["gradle_version_status"], "unknown")
+        self.assertEqual(values["resolved_jdk_version"], "17")
+        self.assertEqual(values["jdk_source"], "manual selection")
+        self.assertEqual(values["toolchain_compatibility_status"], "partial")
 
     def test_unknown_wrapper_uses_agp_minimum_and_marks_partial(self) -> None:
         values = self.run_resolver({
