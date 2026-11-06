@@ -121,7 +121,7 @@ class ResolveToolchainTest(unittest.TestCase):
     def test_builtin_fallback_and_manual_override(self) -> None:
         fallback = self.run_resolver({})
         self.assertEqual(fallback["resolved_gradle_version"], "8.14.3")
-        self.assertEqual(fallback["resolved_jdk_version"], "24")
+        self.assertEqual(fallback["resolved_jdk_version"], "17")
 
         manual = self.run_resolver({}, gradle="7.6.4", jdk="17")
         self.assertEqual(manual["resolved_gradle_version"], "7.6.4")
