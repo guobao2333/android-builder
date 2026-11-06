@@ -72,7 +72,7 @@ def collect_variables(files: list[Path], catalog: dict[str, str]) -> dict[str, s
 
 
 def resolve_expression(expression: str, variables: dict[str, str]) -> str:
-    value = expression.strip().rstrip(";,").strip()
+    value = expression.strip().rstrip(";,}").strip()
     literal = re.fullmatch(r"""["']([^"']+)["']""", value)
     if literal:
         return literal.group(1)
