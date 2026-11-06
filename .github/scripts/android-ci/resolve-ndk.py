@@ -78,7 +78,7 @@ def resolve_expression(expression: str, variables: dict[str, str]) -> str:
         return literal.group(1)
 
     catalog_ref = re.fullmatch(
-        r"""(?:libs\.versions\.)?([A-Za-z0-9_.-]+)(?:\.get\(\))?(?:\.toString\(\))?""",
+        r"""libs\.versions\.([A-Za-z0-9_-]+)(?:\.get\(\))?(?:\.toString\(\))?""",
         value,
     )
     if catalog_ref and catalog_ref.group(1) in variables:
