@@ -253,6 +253,14 @@ jobs:
           echo "source_short_sha=$SOURCE_SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "Checked out source: ref=$SOURCE_REF sha=$SOURCE_SHA"
 
+      - name: Test toolchain version resolver
+        shell: bash
+        env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+        run: |
+          set -euo pipefail
+          python3 "$CI_HELPERS_DIR/tests/test-resolve-toolchain.py"
+
       - name: Resolve AGP, Gradle and JDK compatibility
         id: toolchain
         shell: bash
