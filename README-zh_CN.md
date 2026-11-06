@@ -122,7 +122,7 @@ workflow 会在执行 Gradle 前自动解析 Android 工具链：
 
 ## Workflow 流程图与摘要
 
-Actions 可视化流程图的 job 名称也会携带必要上下文：setup 节点显示目标仓库和模块过滤条件；Test/Build 节点显示实际解析出的 Gradle 与 JDK 版本；Build 节点还显示模块和具体任务。GitHub Job Summary 另外生成 Mermaid 流程图，展示 AGP、Gradle、JDK、模块/variant 数量、构建任务和产物类型，完整输入及 matrix 表格仍保留在下方。
+Actions 可视化流程图的 job 名称也会携带必要上下文：setup 节点显示目标仓库和模块过滤条件；Test/Build 节点显示实际解析出的 AGP、Gradle 与 JDK 版本；Build 节点还显示模块和具体任务。GitHub Job Summary 另外生成 Mermaid 流程图，展示 AGP、Gradle、JDK、模块/variant 数量、构建任务和产物类型，完整输入及 matrix 表格仍保留在下方。
 
 ## build_type 行为
 
