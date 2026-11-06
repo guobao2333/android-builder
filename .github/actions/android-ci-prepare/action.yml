@@ -20,7 +20,7 @@ inputs:
     description: Use the checked-out Gradle Wrapper instead of a system Gradle CLI.
     required: true
   gradle_install_mode:
-    description: Gradle CLI installation mode (setup-gradle, legacy, or wrapper).
+    description: Toolchain mode (wrapper, setup-gradle, legacy, or legacy-wrapper).
     required: true
   run_prebuild:
     description: Whether to resolve, cache, and run the pre-build command.
@@ -58,7 +58,12 @@ runs:
       with:
         java-version: ${{ inputs.jdk_version }}
         distribution: temurin
-        cache: ${{ inputs.use_gradle_wrapper == 'true' && 'gradle' || '' }}
+
+    - name: Setup Gradle Wrapper
+      if: ${{ inputs.gradle_install_mode == 'wrapper' }}
+      uses: gradle/actions/setup-gradle@v6
+      with:
+        cache-provider: basic
 
     - name: Setup Gradle CLI
       if: ${{ inputs.gradle_install_mode == 'setup-gradle' }}
@@ -67,12 +72,17 @@ runs:
         gradle-version: ${{ inputs.gradle_version }}
         cache-provider: basic
 
-    - name: Cache legacy Gradle CLI
-      if: ${{ inputs.gradle_install_mode == 'legacy' }}
+    - name: Cache legacy Gradle files
+      if: ${{ inputs.gradle_install_mode == 'legacy' || inputs.gradle_install_mode == 'legacy-wrapper' }}
       uses: actions/cache@v5
       with:
-        path: ${{ runner.temp }}/gradle-cli/gradle-${{ inputs.gradle_version }}
-        key: legacy-gradle-${{ runner.os }}-${{ runner.arch }}-${{ inputs.gradle_version }}
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+          ${{ runner.temp }}/gradle-cli/gradle-${{ inputs.gradle_version }}
+        key: legacy-gradle-${{ runner.os }}-${{ runner.arch }}-${{ inputs.gradle_version }}-${{ inputs.source_sha }}
+        restore-keys: |
+          legacy-gradle-${{ runner.os }}-${{ runner.arch }}-${{ inputs.gradle_version }}-
 
     - name: Install legacy Gradle CLI
       if: ${{ inputs.gradle_install_mode == 'legacy' }}
