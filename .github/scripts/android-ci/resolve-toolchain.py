@@ -128,30 +128,54 @@ def resolve_variable(raw: str, variables: dict[str, str]) -> str:
 
 
 def catalog_agp_versions(text: str) -> list[str]:
-    version_section = re.search(r"(?ms)^\[versions\]\s*(.*?)(?=^\[|\Z)", text)
+    """Read AGP plugin aliases from a Gradle version catalog."""
+
+    version_section = re.search(
+        r"(?ms)^[ \\t]*\\[versions\\][ \\t]*(.*?)(?=^[ \\t]*\\[|\\Z)",
+        text,
+    )
     if not version_section:
         return []
+
     versions = {
         match.group(1): match.group(2)
         for match in re.finditer(
-            r"(?m)^\s*([A-Za-z0-9_.-]+)\s*=\s*['\"]([^'\"]+)['\"]",
+            r"(?m)^[ \\t]*([A-Za-z0-9_.-]+)[ \\t]*=[ \\t]*['\\"]([^'\\"]+)['\\"]",
             version_section.group(1),
         )
     }
-    plugin_section = re.search(r"(?ms)^\[plugins\]\s*(.*?)(?=^\[|\Z)", text)
+
+    plugin_section = re.search(
+        r"(?ms)^[ \\t]*\\[plugins\\][ \\t]*(.*?)(?=^[ \\t]*\\[|\\Z)",
+        text,
+    )
     if not plugin_section:
         return []
+
     found: list[str] = []
-    for line in plugin_section.group(1).splitlines():
-        if "com.android." not in line:
+    entry_pattern = re.compile(
+        r"(?ms)^[ \\t]*[A-Za-z0-9_.-]+[ \\t]*=[ \\t]*\\{(.*?)\\}"
+    )
+    for entry in entry_pattern.finditer(plugin_section.group(1)):
+        body = entry.group(1)
+        if not re.search(r"\\bid[ \\t]*=[ \\t]*['\\"]com\\.android\\.", body):
             continue
-        ref = re.search(r"version\.ref\s*=\s*['\"]([^'\"]+)['\"]", line)
-        if ref and ref.group(1) in versions:
-            found.append(versions[ref.group(1)])
-        else:
-            literal = re.search(r"version\s*=\s*['\"]([^'\"]+)['\"]", line)
-            if literal:
-                found.append(literal.group(1))
+
+        reference = re.search(
+            r"version\\.ref[ \\t]*=[ \\t]*['\\"]([^'\\"]+)['\\"]",
+            body,
+        )
+        if reference and reference.group(1) in versions:
+            found.append(versions[reference.group(1)])
+            continue
+
+        literal = re.search(
+            r"version[ \\t]*=[ \\t]*['\\"]([^'\\"]+)['\\"]",
+            body,
+        )
+        if literal:
+            found.append(literal.group(1))
+
     return found
 
 
@@ -245,9 +269,18 @@ def main() -> int:
     variables = parse_variables(files)
     agp_versions = detect_agp_versions(files, variables)
     agp_version = agp_versions[-1] if agp_versions else ""
+    agp_status = "detected" if agp_version else "unknown"
     agp_required_gradle = required_gradle_for_agp(agp_version)
     wrapper_version = find_wrapper_version(root)
     wrapper_script = (root / "gradlew").is_file()
+    wrapper_properties = root / "gradle" / "wrapper" / "gradle-wrapper.properties"
+    wrapper_properties_present = wrapper_properties.is_file()
+    if wrapper_version:
+        wrapper_status = "detected"
+    elif wrapper_script or wrapper_properties_present:
+        wrapper_status = "unknown"
+    else:
+        wrapper_status = "not-present"
     requested_gradle = args.gradle_version.strip() or "auto"
     requested_jdk = args.jdk_version.strip() or "auto"
     warnings: list[str] = []
@@ -263,6 +296,16 @@ def main() -> int:
         warnings.append(
             "Multiple AGP versions were found: " + ", ".join(agp_versions)
             + ". The highest detected version is used for compatibility checks."
+        )
+    if agp_status == "unknown":
+        warnings.append(
+            "AGP version is unknown: no supported Android Gradle Plugin declaration was detected. "
+            "Gradle/JDK compatibility with AGP cannot be verified."
+        )
+    if wrapper_status == "unknown":
+        warnings.append(
+            "Gradle Wrapper metadata is unknown: a Wrapper script or properties file exists, "
+            "but its distribution version could not be parsed."
         )
 
     if wrapper_version:
@@ -283,14 +326,16 @@ def main() -> int:
                 f"minimum ({agp_required_gradle}); preserving the project's Wrapper declaration."
             )
     elif wrapper_script:
-        resolved_gradle = agp_required_gradle or (
-            requested_gradle if requested_gradle != "auto" else DEFAULT_GRADLE_VERSION
-        )
-        gradle_source = "Gradle Wrapper script (distribution version unknown)"
+        resolved_gradle = "unknown"
+        gradle_source = "Gradle Wrapper (distribution version unknown)"
         use_wrapper = True
+        if requested_gradle != "auto":
+            warnings.append(
+                f"Selected Gradle fallback {requested_gradle} is ignored because gradlew exists."
+            )
         warnings.append(
-            "gradlew exists but gradle-wrapper.properties has no readable distribution URL; "
-            "the Wrapper is preserved and its version cannot be verified in advance."
+            "The Wrapper script will be used, but its Gradle distribution is unknown. "
+            "Automatic JDK validation is incomplete."
         )
     elif requested_gradle != "auto":
         resolved_gradle = requested_gradle
@@ -305,28 +350,43 @@ def main() -> int:
         gradle_source = "built-in default fallback"
         use_wrapper = False
 
-    if version_tuple(resolved_gradle) is None:
-        print(f"::error::Invalid Gradle version: {resolved_gradle}", file=sys.stderr)
-        return 1
-    if agp_required_gradle and not at_least(resolved_gradle, agp_required_gradle):
+    gradle_version_known = resolved_gradle != "unknown"
+    if gradle_version_known:
+        if version_tuple(resolved_gradle) is None:
+            print(f"::error::Invalid Gradle version: {resolved_gradle}", file=sys.stderr)
+            return 1
+        gradle_min_jdk, gradle_max_jdk = gradle_jdk_range(resolved_gradle)
+        agp_min_jdk = minimum_jdk_for_agp(agp_version, resolved_gradle)
+        auto_jdk = max(gradle_min_jdk, agp_min_jdk)
+        if auto_jdk > gradle_max_jdk:
+            warnings.append(
+                f"No JDK satisfies Gradle {resolved_gradle} (Java {gradle_min_jdk}-{gradle_max_jdk}) "
+                f"and AGP {agp_version or 'unknown'} (Java {agp_min_jdk}+)."
+            )
+            auto_jdk = gradle_max_jdk
+    else:
+        gradle_min_jdk = 0
+        gradle_max_jdk = 0
+        agp_min_jdk = minimum_jdk_for_agp(agp_version, "")
+        if not agp_version and requested_jdk == "auto":
+            print(
+                "::error::AGP and Gradle versions are both unknown. "
+                "Set jdk_version explicitly instead of relying on automatic selection.",
+                file=sys.stderr,
+            )
+            return 1
+        auto_jdk = agp_min_jdk
         warnings.append(
-            f"Selected Gradle {resolved_gradle} is below AGP {agp_version}'s "
-            f"minimum ({agp_required_gradle})."
+            "Gradle runtime version is unknown. JDK auto-selection uses only the detected AGP "
+            "minimum; compatibility with the actual Wrapper distribution cannot be verified."
         )
-
-    gradle_min_jdk, gradle_max_jdk = gradle_jdk_range(resolved_gradle)
-    agp_min_jdk = minimum_jdk_for_agp(agp_version, resolved_gradle)
-    auto_jdk = max(gradle_min_jdk, agp_min_jdk)
-    if auto_jdk > gradle_max_jdk:
-        warnings.append(
-            f"No JDK satisfies Gradle {resolved_gradle} (Java {gradle_min_jdk}-{gradle_max_jdk}) "
-            f"and AGP {agp_version or 'unknown'} (Java {agp_min_jdk}+)."
-        )
-        auto_jdk = gradle_max_jdk
 
     if requested_jdk == "auto":
         resolved_jdk = str(auto_jdk)
-        jdk_source = "AGP/Gradle compatibility"
+        jdk_source = (
+            "AGP/Gradle compatibility" if gradle_version_known
+            else "AGP minimum (Wrapper unknown)"
+        )
     else:
         if not requested_jdk.isdigit():
             print(f"::error::Invalid JDK version: {requested_jdk}", file=sys.stderr)
@@ -334,18 +394,35 @@ def main() -> int:
         resolved_jdk = requested_jdk
         jdk_source = "manual selection"
         if int(resolved_jdk) < agp_min_jdk:
-            if agp_version:
-                reason = f"below detected AGP {agp_version} minimum Java {agp_min_jdk}"
-            else:
-                reason = f"below the conservative Java {agp_min_jdk} baseline for Gradle {resolved_gradle}"
-            warnings.append(f"Selected JDK {resolved_jdk} is {reason}.")
-        if not gradle_min_jdk <= int(resolved_jdk) <= gradle_max_jdk:
+            warnings.append(
+                f"Selected JDK {resolved_jdk} is below the detected/conservative "
+                f"AGP minimum Java {agp_min_jdk}."
+            )
+        if gradle_version_known and not gradle_min_jdk <= int(resolved_jdk) <= gradle_max_jdk:
             warnings.append(
                 f"Selected JDK {resolved_jdk} is outside Gradle {resolved_gradle}'s "
                 f"supported Java range ({gradle_min_jdk}-{gradle_max_jdk})."
             )
 
-    if use_wrapper:
+    compatibility_status = "verified" if agp_status == "detected" and gradle_version_known else "partial"
+    if (
+        gradle_version_known
+        and agp_required_gradle
+        and not at_least(resolved_gradle, agp_required_gradle)
+    ):
+        compatibility_status = "incompatible"
+    if requested_jdk != "auto" and int(resolved_jdk) < agp_min_jdk:
+        compatibility_status = "incompatible"
+    if (
+        requested_jdk != "auto"
+        and gradle_version_known
+        and not gradle_min_jdk <= int(resolved_jdk) <= gradle_max_jdk
+    ):
+        compatibility_status = "incompatible"
+
+    if not gradle_version_known:
+        install_mode = "unknown-wrapper"
+    elif use_wrapper:
         install_mode = (
             "legacy-wrapper" if compare_versions(resolved_gradle, "6.0") < 0 else "wrapper"
         )
@@ -357,9 +434,13 @@ def main() -> int:
     warning = " ".join(warnings)
     values = {
         "agp_version": agp_version or "unknown",
+        "agp_detection_status": agp_status,
         "agp_versions": ",".join(agp_versions) if agp_versions else "unknown",
         "agp_required_gradle": agp_required_gradle or "unknown",
-        "wrapper_gradle_version": wrapper_version or "none",
+        "wrapper_gradle_version": wrapper_version or ("unknown" if wrapper_status == "unknown" else "none"),
+        "wrapper_detection_status": wrapper_status,
+        "gradle_version_status": "known" if gradle_version_known else "unknown",
+        "toolchain_compatibility_status": compatibility_status,
         "wrapper_script_found": "true" if wrapper_script else "false",
         "use_wrapper": "true" if use_wrapper else "false",
         "resolved_gradle_version": resolved_gradle,
