@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ -f ./gradlew ]; then
+PREFER_WRAPPER="${CI_PREFER_WRAPPER:-true}"
+if [ "$PREFER_WRAPPER" = "true" ] && [ -f ./gradlew ]; then
   chmod +x ./gradlew
   printf '%s\n' "./gradlew"
   exit 0
