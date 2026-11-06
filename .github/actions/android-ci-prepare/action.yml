@@ -14,9 +14,14 @@ inputs:
     description: NDK version or alias to install and verify.
     required: true
   gradle_version:
-    description: Gradle CLI version used when the project has no Gradle Wrapper.
-    required: false
-    default: '8.14.3'
+    description: Resolved Gradle version for this project.
+    required: true
+  use_gradle_wrapper:
+    description: Use the checked-out Gradle Wrapper instead of a system Gradle CLI.
+    required: true
+  gradle_install_mode:
+    description: Gradle CLI installation mode (setup-gradle, legacy, or wrapper).
+    required: true
   run_prebuild:
     description: Whether to resolve, cache, and run the pre-build command.
     required: false
@@ -53,12 +58,44 @@ runs:
       with:
         java-version: ${{ inputs.jdk_version }}
         distribution: temurin
+        cache: ${{ inputs.use_gradle_wrapper == 'true' && 'gradle' || '' }}
 
     - name: Setup Gradle CLI
+      if: ${{ inputs.gradle_install_mode == 'setup-gradle' }}
       uses: gradle/actions/setup-gradle@v6
       with:
         gradle-version: ${{ inputs.gradle_version }}
         cache-provider: basic
+
+    - name: Cache legacy Gradle CLI
+      if: ${{ inputs.gradle_install_mode == 'legacy' }}
+      uses: actions/cache@v5
+      with:
+        path: ${{ runner.temp }}/gradle-cli/gradle-${{ inputs.gradle_version }}
+        key: legacy-gradle-${{ runner.os }}-${{ runner.arch }}-${{ inputs.gradle_version }}
+
+    - name: Install legacy Gradle CLI
+      if: ${{ inputs.gradle_install_mode == 'legacy' }}
+      shell: bash
+      env:
+        GRADLE_VERSION: ${{ inputs.gradle_version }}
+        GRADLE_INSTALL_DIR: ${{ runner.temp }}/gradle-cli/gradle-${{ inputs.gradle_version }}
+      run: |
+        set -euo pipefail
+        if [ ! -x "$GRADLE_INSTALL_DIR/bin/gradle" ]; then
+          mkdir -p "$(dirname "$GRADLE_INSTALL_DIR")"
+          archive="$RUNNER_TEMP/gradle-$GRADLE_VERSION-bin.zip"
+          extract_dir="$RUNNER_TEMP/gradle-extract-$GRADLE_VERSION"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip" \
+            --output "$archive"
+          rm -rf "$extract_dir"
+          mkdir -p "$extract_dir"
+          unzip -q "$archive" -d "$extract_dir"
+          mv "$extract_dir/gradle-$GRADLE_VERSION" "$GRADLE_INSTALL_DIR"
+          rm -rf "$extract_dir" "$archive"
+        fi
+        echo "$GRADLE_INSTALL_DIR/bin" >> "$GITHUB_PATH"
 
     - name: Setup NDK
       uses: nttld/setup-ndk@v1
