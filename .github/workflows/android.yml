@@ -93,9 +93,9 @@ on:
       ndk_version:
         description: 'NDK Version'
         required: true
-        default: 'r27d'
+        default: 'auto'
         type: choice
-        options: ['r29', 'r28c', 'r27d', 'r26d', 'r25c', 'r24', 'r23c', 'r22b', 'r21e', 'r20b']
+        options: ['auto', 'r29', 'r28c', 'r27d', 'r26d', 'r25c', 'r24', 'r23c', 'r22b', 'r21e', 'r20b']
 
       gradle_version:
         description: 'Gradle version (auto detects Wrapper/AGP; otherwise uses the selected fallback)'
@@ -160,6 +160,10 @@ jobs:
       jdk_source: ${{ steps.toolchain.outputs.jdk_source }}
       use_wrapper: ${{ steps.toolchain.outputs.use_wrapper }}
       toolchain_warning: ${{ steps.toolchain.outputs.toolchain_warning }}
+      resolved_ndk_version: ${{ steps.ndk.outputs.resolved_ndk_version }}
+      resolved_ndk_revision: ${{ steps.ndk.outputs.resolved_ndk_revision }}
+      ndk_version_source: ${{ steps.ndk.outputs.ndk_version_source }}
+      ndk_detection_status: ${{ steps.ndk.outputs.ndk_detection_status }}
       matrix: ${{ steps.meta.outputs.matrix }}
       repository: ${{ steps.meta.outputs.repository }}
       repository_name: ${{ steps.meta.outputs.repository_name }}
@@ -279,13 +283,24 @@ jobs:
             --gradle-version "$REQUESTED_GRADLE_VERSION" \
             --jdk-version "$REQUESTED_JDK_VERSION"
 
+      - name: Resolve project NDK version
+        id: ndk
+        shell: bash
+        working-directory: source
+        env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
+        run: |
+          set -euo pipefail
+          python3 "$CI_HELPERS_DIR/resolve-ndk.py" --requested "$REQUESTED_NDK_VERSION" --fallback r27d
+
       - name: Prepare Android CI toolchain
         uses: ./.android-ci-workflow/.github/actions/android-ci-prepare
         with:
           helpers_dir: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           runner_label: ubuntu-latest
           jdk_version: ${{ steps.toolchain.outputs.resolved_jdk_version }}
-          ndk_version: ${{ inputs.ndk_version }}
+          ndk_version: ${{ steps.ndk.outputs.resolved_ndk_version }}
           gradle_version: ${{ steps.toolchain.outputs.resolved_gradle_version }}
           use_gradle_wrapper: ${{ steps.toolchain.outputs.use_wrapper }}
           gradle_install_mode: ${{ steps.toolchain.outputs.gradle_install_mode }}
@@ -629,7 +644,11 @@ jobs:
               "jdk_version_requested": ${{ toJson(inputs.jdk_version) }},
               "jdk_version": ${{ toJson(steps.toolchain.outputs.resolved_jdk_version) }},
               "jdk_source": ${{ toJson(steps.toolchain.outputs.jdk_source) }},
-              "ndk_version": ${{ toJson(inputs.ndk_version) }},
+              "ndk_version_requested": ${{ toJson(inputs.ndk_version) }},
+              "ndk_version": ${{ toJson(steps.ndk.outputs.resolved_ndk_version) }},
+              "ndk_revision": ${{ toJson(steps.ndk.outputs.resolved_ndk_revision) }},
+              "ndk_version_source": ${{ toJson(steps.ndk.outputs.ndk_version_source) }},
+              "ndk_detection_status": ${{ toJson(steps.ndk.outputs.ndk_detection_status) }},
               "gradle_version_requested": ${{ toJson(inputs.gradle_version) }},
               "gradle_version": ${{ toJson(steps.toolchain.outputs.resolved_gradle_version) }},
               "gradle_source": ${{ toJson(steps.toolchain.outputs.gradle_source) }},
@@ -699,7 +718,7 @@ jobs:
           helpers_dir: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           runner_label: ${{ inputs.os_version }}
           jdk_version: ${{ needs.setup-matrix.outputs.resolved_jdk_version }}
-          ndk_version: ${{ inputs.ndk_version }}
+          ndk_version: ${{ needs.setup-matrix.outputs.resolved_ndk_version }}
           gradle_version: ${{ needs.setup-matrix.outputs.resolved_gradle_version }}
           use_gradle_wrapper: ${{ needs.setup-matrix.outputs.use_wrapper }}
           gradle_install_mode: ${{ needs.setup-matrix.outputs.gradle_install_mode }}
@@ -771,7 +790,7 @@ jobs:
           helpers_dir: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           runner_label: ${{ inputs.os_version }}
           jdk_version: ${{ needs.setup-matrix.outputs.resolved_jdk_version }}
-          ndk_version: ${{ inputs.ndk_version }}
+          ndk_version: ${{ needs.setup-matrix.outputs.resolved_ndk_version }}
           gradle_version: ${{ needs.setup-matrix.outputs.resolved_gradle_version }}
           use_gradle_wrapper: ${{ needs.setup-matrix.outputs.use_wrapper }}
           gradle_install_mode: ${{ needs.setup-matrix.outputs.gradle_install_mode }}
