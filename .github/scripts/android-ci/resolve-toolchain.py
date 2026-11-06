@@ -186,12 +186,16 @@ def required_gradle_for_agp(version: str) -> str:
     return ""
 
 
-def minimum_jdk_for_agp(version: str) -> int:
-    if not version:
+def minimum_jdk_for_agp(agp_version: str, gradle_version: str) -> int:
+    if not agp_version:
+        if at_least(gradle_version, "7.3"):
+            return 17
+        if at_least(gradle_version, "5.0"):
+            return 11
         return 8
-    if at_least(version, "8.0"):
+    if at_least(agp_version, "8.0"):
         return 17
-    if at_least(version, "7.0"):
+    if at_least(agp_version, "7.0"):
         return 11
     return 8
 
@@ -311,7 +315,7 @@ def main() -> int:
         )
 
     gradle_min_jdk, gradle_max_jdk = gradle_jdk_range(resolved_gradle)
-    agp_min_jdk = minimum_jdk_for_agp(agp_version)
+    agp_min_jdk = minimum_jdk_for_agp(agp_version, resolved_gradle)
     auto_jdk = max(gradle_min_jdk, agp_min_jdk)
     if auto_jdk > gradle_max_jdk:
         warnings.append(
