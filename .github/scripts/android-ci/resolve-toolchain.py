@@ -324,17 +324,21 @@ def main() -> int:
                 f"Wrapper Gradle {wrapper_version} is older than AGP {agp_version}'s "
                 f"minimum ({agp_required_gradle}); preserving the project's Wrapper declaration."
             )
+    elif wrapper_script and requested_gradle != "auto":
+        resolved_gradle = requested_gradle
+        gradle_source = "manual fallback (Wrapper metadata unknown)"
+        use_wrapper = False
+        warnings.append(
+            "gradlew exists, but its distribution version could not be read. "
+            f"Using the manually selected Gradle CLI {requested_gradle} instead of the unknown Wrapper."
+        )
     elif wrapper_script:
         resolved_gradle = "unknown"
         gradle_source = "Gradle Wrapper (distribution version unknown)"
         use_wrapper = True
-        if requested_gradle != "auto":
-            warnings.append(
-                f"Selected Gradle fallback {requested_gradle} is ignored because gradlew exists."
-            )
         warnings.append(
             "The Wrapper script will be used, but its Gradle distribution is unknown. "
-            "Automatic JDK validation is incomplete."
+            "Select gradle_version to bypass it or set jdk_version explicitly."
         )
     elif requested_gradle != "auto":
         resolved_gradle = requested_gradle
@@ -367,25 +371,21 @@ def main() -> int:
         gradle_min_jdk = 0
         gradle_max_jdk = 0
         agp_min_jdk = minimum_jdk_for_agp(agp_version, "")
-        if not agp_version and requested_jdk == "auto":
+        if requested_jdk == "auto":
             print(
-                "::error::AGP and Gradle versions are both unknown. "
-                "Set jdk_version explicitly instead of relying on automatic selection.",
+                "::error::Gradle runtime version is unknown. Set jdk_version explicitly, "
+                "or select gradle_version to bypass the unknown Wrapper.",
                 file=sys.stderr,
             )
             return 1
-        auto_jdk = agp_min_jdk
         warnings.append(
-            "Gradle runtime version is unknown. JDK auto-selection uses only the detected AGP "
-            "minimum; compatibility with the actual Wrapper distribution cannot be verified."
+            "Gradle runtime version is unknown. The manually selected JDK cannot be checked "
+            "against the actual Wrapper distribution."
         )
 
     if requested_jdk == "auto":
         resolved_jdk = str(auto_jdk)
-        jdk_source = (
-            "AGP/Gradle compatibility" if gradle_version_known
-            else "AGP minimum (Wrapper unknown)"
-        )
+        jdk_source = "AGP/Gradle compatibility"
     else:
         if not requested_jdk.isdigit():
             print(f"::error::Invalid JDK version: {requested_jdk}", file=sys.stderr)
