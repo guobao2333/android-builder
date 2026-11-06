@@ -154,7 +154,7 @@ class ResolveToolchainTest(unittest.TestCase):
                 }
             """,
             "gradlew": "#!/bin/sh\\n",
-        })
+        }, jdk="8")
         self.assertEqual(values["agp_detection_status"], "detected")
         self.assertEqual(values["wrapper_detection_status"], "unknown")
         self.assertEqual(values["gradle_version_status"], "unknown")
@@ -162,6 +162,24 @@ class ResolveToolchainTest(unittest.TestCase):
         self.assertEqual(values["resolved_jdk_version"], "8")
         self.assertEqual(values["gradle_install_mode"], "unknown-wrapper")
         self.assertEqual(values["toolchain_compatibility_status"], "partial")
+
+    def test_unknown_wrapper_can_be_bypassed_with_manual_gradle(self) -> None:
+        values = self.run_resolver({
+            "build.gradle": """
+                buildscript {
+                    dependencies {
+                        classpath 'com.android.tools.build:gradle:3.0.0'
+                    }
+                }
+            """,
+            "gradlew": "#!/bin/sh\\n",
+        }, gradle="4.1", jdk="8")
+        self.assertEqual(values["wrapper_detection_status"], "unknown")
+        self.assertEqual(values["gradle_version_status"], "known")
+        self.assertEqual(values["resolved_gradle_version"], "4.1")
+        self.assertEqual(values["resolved_jdk_version"], "8")
+        self.assertEqual(values["use_wrapper"], "false")
+        self.assertEqual(values["gradle_source"], "manual fallback (Wrapper metadata unknown)")
 
     def test_builtin_fallback_and_manual_override(self) -> None:
         fallback = self.run_resolver({})
