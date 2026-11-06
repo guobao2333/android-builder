@@ -121,7 +121,7 @@ Gradle versions below 6.0 use a legacy distribution/cache path to avoid relying 
 
 ## Workflow graph and summary
 
-The Actions visualization uses informative job names: the setup node identifies the target and module filter, while Test/Build nodes show the resolved Gradle and JDK versions (Build nodes also show the module and task). The GitHub Job Summary adds a Mermaid graph with AGP, Gradle, JDK, module/variant count, selected tasks, and artifact types. The detailed resolved-input and matrix tables remain below the graph.
+The Actions visualization uses informative job names: the setup node identifies the target and module filter, while Test/Build nodes show the resolved AGP, Gradle and JDK versions (Build nodes also show the module and task). The GitHub Job Summary adds a Mermaid graph with AGP, Gradle, JDK, module/variant count, selected tasks, and artifact types. The detailed resolved-input and matrix tables remain below the graph.
 
 ## Build type behavior
 
