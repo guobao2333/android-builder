@@ -1,0 +1,33 @@
+name: Toolchain Resolver Tests
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/scripts/android-ci/**'
+      - '.github/workflows/toolchain-tests.yml'
+      - '.github/workflows/android.yml'
+  pull_request:
+    paths:
+      - '.github/scripts/android-ci/**'
+      - '.github/workflows/toolchain-tests.yml'
+      - '.github/workflows/android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-toolchain-resolver:
+    name: Toolchain resolver regression tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Run toolchain resolver tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/android-ci/tests/test-resolve-toolchain.py
