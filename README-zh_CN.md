@@ -22,7 +22,7 @@
 - 从 `gradle.properties` 读取 `versionName`、`VERSION_NAME` 或 `version`；都不存在时使用 GitHub run number 作为 `version_name`。
 - 通过 Gradle task introspection 识别 Android Application 模块和真实 build variants。
 - 使用 matrix 并行构建匹配的 variants。
-- 可选先运行一次完整的 `Gradle build` 测试任务。
+- 可选先运行一次完整的 `gradle build` 测试任务。
 - 可选在 Gradle 构建前运行 pre-build 命令，包括适配 NekoBox 风格 `libcore` 构建的 auto 模式。
 - 默认只对 release/AAB 或 `build`/`assemble`/`bundle` 这类聚合任务追加 `-Punsigned`；debug 保留 Android/Gradle 默认测试签名，只有失败且疑似签名问题时才重试兜底。
 - 上传 APK / AAB 为 GitHub Actions artifacts。
@@ -72,11 +72,11 @@ workflow 会把运行 workflow 的仓库按 `github.sha` checkout 到单独的 h
 | **module** | 目标模块，支持逗号分隔。可写 `app` 或 `:app`。为空时自动探测可安装的 Android Application 模块。 | `string` | `app` |
 | **build_flavor** | build flavor 过滤器，支持逗号分隔。留空表示接受所有 flavor。匹配逻辑会规范化后做子串匹配。 | `string` | 空 |
 | **build_type** | 构建产物选择器。 | choice: `debug`, `release`, `aab`, `all` | `debug` |
-| **build_options** | 附加到 `Gradle build` 和具体构建任务后的额外 Gradle 参数。支持 shell 风格引号或字符串组成的 JSON 数组。 | `string` | 空 |
+| **build_options** | 附加到 `gradle build` 和具体构建任务后的额外 Gradle 参数。支持 shell 风格引号或字符串组成的 JSON 数组。 | `string` | 空 |
 | **signing** | 是否允许 release 签名构建。默认关闭；release/AAB 任务在未检测到完整签名配置时会使用 `-Punsigned`。debug 保留 Android/Gradle 默认测试签名，只在疑似签名失败时重试兜底。 | `boolean` | `false` |
 | **pre_build_command** | Gradle 前置构建命令。可用 `auto`、`none`、`skip` 或自定义 shell 命令。 | `string` | `auto` |
 | **go_version** | 当前置构建需要 Go 时传给 `actions/setup-go` 的 Go 版本。 | `string` | `^1.25` |
-| **build_test** | 是否在 build matrix 前单独运行 `Gradle build`。 | `boolean` | `false` |
+| **build_test** | 是否在 build matrix 前单独运行 `gradle build`。 | `boolean` | `false` |
 | **upload_release** | 构建成功后是否发布 GitHub Release。 | `boolean` | `false` |
 | **os_version** | test/build job 使用的 runner 镜像。`setup-matrix` 和 `release` 固定使用 `ubuntu-latest`。 | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
 | **jdk_version** | Temurin JDK 版本。 | choice: `26`, `25`, `24`, `23`, `22`, `21`, `17`, `11`, `8` | `21` |
@@ -339,8 +339,8 @@ POST /repos/{owner}/{repo}/actions/workflows/android.yml/dispatches
     "os_version": "ubuntu-latest",
     "jdk_version": "21",
     "ndk_version": "r27d",
-  "gradle_version": "8.14.3",
-  "submodules": "recursive"
+    "gradle_version": "8.14.3",
+    "submodules": "recursive"
   }
 }
 ```
