@@ -13,6 +13,10 @@ inputs:
   ndk_version:
     description: NDK version or alias to install and verify.
     required: true
+  gradle_version:
+    description: Gradle CLI version used when the project has no Gradle Wrapper.
+    required: false
+    default: '8.14.3'
   run_prebuild:
     description: Whether to resolve, cache, and run the pre-build command.
     required: false
@@ -49,7 +53,12 @@ runs:
       with:
         java-version: ${{ inputs.jdk_version }}
         distribution: temurin
-        cache: gradle
+
+    - name: Setup Gradle CLI
+      uses: gradle/actions/setup-gradle@v6
+      with:
+        gradle-version: ${{ inputs.gradle_version }}
+        cache-provider: basic
 
     - name: Setup NDK
       uses: nttld/setup-ndk@v1

@@ -11,17 +11,18 @@ This repository contains a manually triggered GitHub Actions workflow for buildi
 The workflow defined in `android.yml`:
 
 - Runs from `workflow_dispatch` manual inputs.
-- Checks out a target repository with recursive submodules.
+- Checks out a target repository with configurable submodule mode: disabled, direct, or recursive (default).
+- Verifies the requested submodules after checkout and reports initialization or permission failures clearly.
 - Uses the target repository default branch when `branch` is empty.
 - Supports a `CHECKOUT_TOKEN` secret for private repositories or private submodules, and falls back to `github.token` for normal access.
-- Sets up Temurin JDK, Android NDK, and Gradle cache through the shared `.github/actions/android-ci-prepare` composite action used by setup, test, and build jobs.
+- Sets up Temurin JDK, a configurable Gradle CLI fallback, Android NDK, and Gradle cache through the shared `.github/actions/android-ci-prepare` composite action used by setup, test, and build jobs.
 - Verifies that the requested NDK revision is installed completely, reusing `nttld/setup-ndk` local cache entries when possible and repairing or installing with `sdkmanager` only when needed.
 - Keeps shared CI logic in `.github/actions/android-ci-prepare/` and `.github/scripts/android-ci/` so NDK verification, pre-build resolution, Gradle option parsing, unsigned option handling, and summary rendering are not duplicated across jobs.
 - Resolves source metadata: branch/ref, full SHA, short SHA, repository name, and version name.
 - Reads `gradle.properties` for `versionName`, `VERSION_NAME`, or `version`; if none is found, the GitHub run number is used as `version_name`.
 - Uses Gradle task introspection to detect Android application modules and real build variants.
 - Builds matching variants through a matrix.
-- Optionally runs a full `./gradlew build` test job before the build matrix.
+- Optionally runs a full `Gradle build` test job before the build matrix.
 - Optionally runs a pre-build shell command, including an auto mode for NekoBox-style `libcore` builds.
 - Uploads APK / AAB files as GitHub Actions artifacts.
 - Optionally publishes a GitHub Release in the repository that runs this workflow.
@@ -66,18 +67,20 @@ Shared helper responsibilities:
 |---|---|:---:|:---:|
 | **repository** | Target repository in `owner/repo` format. Leave empty to use the repository that runs this workflow. | `string` | empty |
 | **branch** | Target branch, tag, or SHA. Leave empty to use the target repository default branch. | `string` | empty |
+| **submodules** | Git submodule checkout mode: `false` disables submodules, `true` checks out direct submodules, and `recursive` includes nested submodules. | choice: `false`, `true`, `recursive` | `recursive` |
 | **module** | Target module(s), comma-separated. Use values such as `app` or `:app`. If empty, the workflow auto-detects installable Android application modules. | `string` | `app` |
 | **build_flavor** | Build flavor filter(s), comma-separated. Leave empty to accept all flavors. Matching is normalized and substring-based. | `string` | empty |
 | **build_type** | Build output selector. | choice: `debug`, `release`, `aab`, `all` | `debug` |
-| **build_options** | Extra Gradle arguments appended to `./gradlew build` and build tasks. Accepts shell-style quoting or a JSON array of strings. | `string` | empty |
+| **build_options** | Extra Gradle arguments appended to `Gradle build` and build tasks. Accepts shell-style quoting or a JSON array of strings. | `string` | empty |
 | **signing** | Whether release signing is allowed. Defaults to disabled; release/AAB tasks use `-Punsigned` unless a complete signing config is detected. Debug tasks keep Gradle/Android's default debug signing and only retry with `-Punsigned` after a signing-related failure. | `boolean` | `false` |
 | **pre_build_command** | Pre-build command before Gradle. Use `auto`, `none`, `skip`, or a custom shell command. | `string` | `auto` |
 | **go_version** | Go version passed to `actions/setup-go` when the pre-build command needs Go. | `string` | `^1.25` |
-| **build_test** | Run a separate `./gradlew build` job before the build matrix. | `boolean` | `false` |
+| **build_test** | Run a separate `Gradle build` job before the build matrix. | `boolean` | `false` |
 | **upload_release** | Publish a GitHub Release after successful builds. | `boolean` | `false` |
 | **os_version** | Runner image for test/build jobs. `setup-matrix` and `release` stay on `ubuntu-latest`. | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
 | **jdk_version** | Temurin JDK version. | choice: `26`, `25`, `24`, `23`, `22`, `21`, `17`, `11`, `8` | `21` |
 | **ndk_version** | Android NDK alias. | choice: `r29`, `r28c`, `r27d`, `r26d`, `r25c`, `r24`, `r23c`, `r22b`, `r21e`, `r20b` | `r27d` |
+| **gradle_version** | Gradle CLI version installed for projects without `gradlew`. It does not override the version selected by an existing Wrapper. | `string` | `8.14.3` |
 
 ## Runner behavior
 
@@ -102,6 +105,16 @@ The NDK verification helper detects the host OS and checks the matching NDK tool
 
 Pre-build cache keys include `runner.os`, `runner.arch`, repository name, source SHA, requested NDK, Go version, and a runtime SHA256 over `run`, `buildScript`, and `libcore`. This avoids using `hashFiles(...)` inside the composite action and prevents macOS Intel, macOS arm64, and Linux runs from sharing incompatible cached outputs.
 
+
+## Gradle command selection
+
+The workflow prefers the target project's Gradle Wrapper:
+
+- If `./gradlew` exists, it is made executable and used for module discovery, task inspection, tests, and builds.
+- If `./gradlew` is missing, the workflow uses the `gradle` CLI installed by `gradle/actions/setup-gradle`.
+- `gradle_version` controls only this CLI fallback. The default is `8.14.3`; change it when the target project's Android Gradle Plugin or JDK requires another Gradle version.
+
+The workflow does not generate or commit Wrapper files into the target repository.
 
 ## Build type behavior
 
@@ -189,7 +202,8 @@ For manual commands, Go is installed when the command text contains `go`, `gomob
 When `build_test=true`, the workflow runs a separate `test` job before the build matrix:
 
 ```bash
-./gradlew build --no-daemon --stacktrace <per-task Gradle options>
+./gradlew build   # when the project has a Wrapper
+gradle build      # automatic fallback when ./gradlew is absent
 ```
 
 The test job checks out the exact source SHA resolved by `setup-matrix`, sets up JDK/NDK, optionally runs the same pre-build flow, and then runs the full Gradle build.
@@ -200,6 +214,7 @@ Each build matrix entry runs one Gradle task:
 
 ```bash
 ./gradlew <module>:<gradle_task> --no-daemon --stacktrace <per-task Gradle options>
+# or use "gradle" with the same arguments when ./gradlew is absent
 ```
 
 Artifacts are uploaded from the matching module directory:
@@ -322,7 +337,9 @@ Example payload:
     "upload_release": "false",
     "os_version": "ubuntu-latest",
     "jdk_version": "21",
-    "ndk_version": "r27d"
+    "ndk_version": "r27d",
+  "gradle_version": "8.14.3",
+  "submodules": "recursive"
   }
 }
 ```
@@ -353,15 +370,19 @@ gh workflow run android.yml \
   -f upload_release=false \
   -f os_version=ubuntu-latest \
   -f jdk_version=21 \
-  -f ndk_version=r27d
+  -f ndk_version=r27d \
+  -f gradle_version=8.14.3 \
+  -f submodules=recursive
 ```
 
 ## Common failure causes
 
 - Target repository not found or access denied.
 - Target branch, tag, or SHA not found.
-- Private repository or submodule requires `CHECKOUT_TOKEN`.
-- Module name typo or module does not exist in `./gradlew projects`.
+- Private repository or submodule requires a `CHECKOUT_TOKEN` that can read every target and submodule repository.
+- A submodule remains uninitialized or points at an unavailable commit; inspect `.gitmodules` URLs and the `CHECKOUT_TOKEN` permissions.
+- A wrapperless project needs a different `gradle_version` for its Android Gradle Plugin/JDK combination.
+- Module name typo or module does not exist in Gradle's `projects` output.
 - Requested module is not an installable Android application module.
 - Requested flavor/build type combination does not exist.
 - `build_options` has invalid shell quoting / JSON syntax, or contains arguments that Gradle does not understand.
