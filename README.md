@@ -256,7 +256,7 @@ The summary contains:
 - Source SHA.
 - Module, flavor, build type, raw build options, base Gradle options, per-task signing decision, unsigned scope, pre-build command, and Go version.
 - Build/test/release options.
-- Runner label, JDK, requested NDK, resolved NDK revision, and `ANDROID_NDK_HOME`.
+- Runner label, JDK, requested NDK, resolved NDK revision, `ANDROID_NDK_HOME`, configured Gradle CLI fallback version, and submodule mode.
 - Version name.
 - Final build matrix with module, flavor, build type, artifact type, Gradle task, and artifact name.
 
