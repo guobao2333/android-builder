@@ -285,6 +285,7 @@ jobs:
           gradle_version: ${{ steps.toolchain.outputs.resolved_gradle_version }}
           use_gradle_wrapper: ${{ steps.toolchain.outputs.use_wrapper }}
           gradle_install_mode: ${{ steps.toolchain.outputs.gradle_install_mode }}
+          source_sha: ${{ steps.source.outputs.source_sha }}
           run_prebuild: 'false'
 
       - name: Resolve version name
