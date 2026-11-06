@@ -142,7 +142,22 @@ class ResolveToolchainTest(unittest.TestCase):
         values = self.run_resolver({
             "gradlew": "#!/bin/sh\\n",
         }, expected_returncode=1)
-        self.assertIn("AGP and Gradle versions are both unknown", values["__stdout__"])
+        self.assertIn("AGP and Gradle Wrapper versions are both unknown", values["__stdout__"])
+        self.assertNotIn("ValueError", values["__stdout__"])
+        self.assertNotIn("ValueError", values["__stdout__"])
+
+    def test_unknown_wrapper_with_detected_agp_requires_manual_jdk(self) -> None:
+        values = self.run_resolver({
+            "build.gradle": """
+                buildscript {
+                    dependencies {
+                        classpath 'com.android.tools.build:gradle:3.0.0'
+                    }
+                }
+            """,
+            "gradlew": "#!/bin/sh\\n",
+        }, expected_returncode=1)
+        self.assertIn("Gradle Wrapper version is unknown (AGP 3.0.0 was detected)", values["__stdout__"])
         self.assertNotIn("ValueError", values["__stdout__"])
 
     def test_unknown_versions_allow_explicit_jdk(self) -> None:

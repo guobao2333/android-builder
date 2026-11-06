@@ -374,11 +374,17 @@ def main() -> int:
         gradle_max_jdk = 0
         agp_min_jdk = minimum_jdk_for_agp(agp_version, "")
         if requested_jdk == "auto":
-            print(
-                "::error::Gradle runtime version is unknown. Set jdk_version explicitly, "
-                "or select gradle_version to bypass the unknown Wrapper.",
-                file=sys.stderr,
-            )
+            if agp_status == "unknown":
+                message = (
+                    "AGP and Gradle Wrapper versions are both unknown. "
+                    "Set jdk_version explicitly, or select gradle_version to bypass the Wrapper."
+                )
+            else:
+                message = (
+                    f"Gradle Wrapper version is unknown (AGP {agp_version} was detected). "
+                    "Set jdk_version explicitly, or select gradle_version to bypass the Wrapper."
+                )
+            print(f"::error::{message}", file=sys.stderr)
             return 1
         warnings.append(
             "Gradle runtime version is unknown. The manually selected JDK cannot be checked "
