@@ -211,6 +211,8 @@ def required_gradle_for_agp(version: str) -> str:
 
 def minimum_jdk_for_agp(agp_version: str, gradle_version: str) -> int:
     if not agp_version:
+        if not version_tuple(gradle_version):
+            return 8
         if at_least(gradle_version, "7.3"):
             return 17
         if at_least(gradle_version, "5.0"):
