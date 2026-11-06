@@ -79,9 +79,9 @@ workflow 会把运行 workflow 的仓库按 `github.sha` checkout 到单独的 h
 | **build_test** | 是否在 build matrix 前单独运行 `gradle build`。 | `boolean` | `false` |
 | **upload_release** | 构建成功后是否发布 GitHub Release。 | `boolean` | `false` |
 | **os_version** | test/build job 使用的 runner 镜像。`setup-matrix` 和 `release` 固定使用 `ubuntu-latest`。 | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
-| **jdk_version** | Temurin JDK 版本。 | choice: `26`, `25`, `24`, `23`, `22`, `21`, `17`, `11`, `8` | `21` |
+| **jdk_version** | JDK 版本。`auto` 会根据识别到的 AGP 和 Gradle 选择兼容版本，也可以手动指定。 | choice: `auto`, `8`, `11`, `17`, `21`, `25`, `26`, `27` | `auto` |
 | **ndk_version** | Android NDK alias。 | choice: `r29`, `r28c`, `r27d`, `r26d`, `r25c`, `r24`, `r23c`, `r22b`, `r21e`, `r20b` | `r27d` |
-| **gradle_version** | 项目没有 `gradlew` 时安装的 Gradle CLI 版本；已有 Wrapper 时不会覆盖 Wrapper 自己指定的版本。 | `string` | `8.14.3` |
+| **gradle_version** | `auto` 优先采用 Wrapper 声明的版本；没有 Wrapper 时根据 AGP 兼容表选择；两者都无法识别时使用默认 `8.14.3`。手动选择只作用于无 Wrapper 声明的情况。 | choice: `auto`, `2.10`, `2.14.1`, `3.3`, `3.5`, `4.1`, `4.10.3`, `5.6.4`, `6.9.4`, `7.0`, `7.6.4`, `8.0`, `8.2`, `8.4`, `8.6`, `8.7`, `8.9`, `8.11.1`, `8.14.3`, `9.1.0`, `9.4.0`, `9.6.0` | `auto` |
 
 ## Runner 行为
 
@@ -107,15 +107,22 @@ NDK 校验 helper 会探测宿主 OS，并检查对应的 NDK 工具链目录：
 pre-build 缓存 key 包含 `runner.os`、`runner.arch`、仓库名、源码 SHA、请求的 NDK、Go 版本，以及运行时对 `run`、`buildScript`、`libcore` 目录计算出的 SHA256。这样不会在 composite action 中使用 `hashFiles(...)`，也避免 macOS Intel、macOS arm64 和 Linux 运行复用不兼容缓存。
 
 
-## Gradle 命令选择
+## Gradle 与 JDK 兼容性
 
-workflow 优先使用目标项目的 Gradle Wrapper：
+workflow 会在执行 Gradle 前自动解析 Android 工具链：
 
-- 存在 `./gradlew` 时，会先赋予可执行权限，随后用它执行模块发现、task 检测、测试和构建。
-- 不存在 `./gradlew` 时，自动回退到由 `gradle/actions/setup-gradle` 安装的 `gradle` CLI。
-- `gradle_version` 只控制 CLI 兜底版本，默认是 `8.14.3`。如果目标项目使用的 Android Gradle Plugin 或 JDK 有不同要求，可以自行调整。
+1. 项目已有 `gradlew` 和 `gradle-wrapper.properties` 时，优先遵循项目声明；如果缺少 `gradlew`，但 properties 存在，则安装其中声明的 Gradle 版本作为 CLI，而不是直接跳到最新版。
+2. 没有 Wrapper 版本声明时，会从 buildscript classpath、plugins DSL、Gradle properties/变量以及 `gradle/*.versions.toml` 版本目录识别 AGP，并按 Android 官方兼容表选择最低所需 Gradle。
+3. AGP 和 Wrapper 都无法识别时，`gradle_version=auto` 使用内置默认版本 `8.14.3`。手动选择 `gradle_version` 只覆盖无 Wrapper 声明时的回退版本，不会改写项目 Wrapper。
+4. `jdk_version=auto` 会综合所选 Gradle 的运行时 Java 范围和 AGP 的最低 JDK 要求自动选择。仍支持手动指定，但不兼容时会输出警告。
 
-workflow 不会向目标仓库生成或提交 Wrapper 文件。
+内置 Gradle 回退菜单覆盖 Gradle 2.x 至 9.x 的代表版本：`2.10`、`2.14.1`、`3.3`、`3.5`、`4.1`、`4.10.3`、`5.6.4`、`6.9.4`、`7.0`、`7.6.4`、`8.0`、`8.2`、`8.4`、`8.6`、`8.7`、`8.9`、`8.11.1`、`8.14.3`、`9.1.0`、`9.4.0`、`9.6.0`。AGP 自动检测也可能选择菜单之外的精确最低版本。
+
+低于 6.0 的 Gradle 会走旧版发行包安装和缓存流程，避免依赖现代 Gradle 初始化脚本。workflow 不会改写或生成目标仓库的 Wrapper 文件。
+
+## Workflow 流程图与摘要
+
+Actions 可视化流程图的 job 名称也会携带必要上下文：setup 节点显示目标仓库和模块过滤条件；Test/Build 节点显示实际解析出的 Gradle 与 JDK 版本；Build 节点还显示模块和具体任务。GitHub Job Summary 另外生成 Mermaid 流程图，展示 AGP、Gradle、JDK、模块/variant 数量、构建任务和产物类型，完整输入及 matrix 表格仍保留在下方。
 
 ## build_type 行为
 
@@ -382,7 +389,7 @@ gh workflow run android.yml \
 - 目标分支、tag 或 SHA 不存在。
 - 私有仓库或 submodule 需要具备目标仓库及所有私有 submodule 读取权限的 `CHECKOUT_TOKEN`。
 - submodule 仍未初始化或指向不存在的 commit；检查 `.gitmodules` URL 及 `CHECKOUT_TOKEN` 权限。
-- 不带 Wrapper 的项目与默认 `gradle_version` 不兼容，需要调整 Gradle 版本以匹配 Android Gradle Plugin/JDK。
+- AGP 声明方式较特殊或无法识别时，可以手动指定 `gradle_version` 和/或 `jdk_version`。
 - 模块名拼写错误，或模块不存在于 Gradle 的 `projects` 输出中.
 - 请求的模块不是可安装 Android Application 模块。
 - 请求的 flavor/build type 组合不存在。
