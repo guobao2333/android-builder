@@ -1,5 +1,5 @@
 name: Android CI
-run-name: "${{ inputs.repository || github.repository }} @ ${{ inputs.branch || 'default branch' }} • ${{ inputs.os_version }} • #${{ github.run_number }}"
+run-name: "${{ inputs.repository || github.repository }} • ${{ inputs.module || 'auto modules' }} • ${{ inputs.build_type }} • ${{ inputs.os_version }} • #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
@@ -13,6 +13,13 @@ on:
         description: 'Target Branch / ref (leave empty to use the target repository default branch)'
         required: false
         default: ''
+
+      submodules:
+        description: 'Git submodule checkout mode'
+        required: true
+        default: 'recursive'
+        type: choice
+        options: ['false', 'true', 'recursive']
 
       module:
         description: 'Target Module(s), comma-separated'
@@ -77,18 +84,25 @@ on:
           - macos-15-intel
 
       jdk_version:
-        description: 'JDK Version'
+        description: 'JDK Version (auto selects a version compatible with AGP and Gradle)'
         required: true
-        default: '21'
+        default: 'auto'
         type: choice
-        options: ['26', '25', '24', '23', '22', '21', '17', '11', '8']
+        options: ['auto', '8', '11', '17', '21', '25', '26', '27']
 
       ndk_version:
         description: 'NDK Version'
         required: true
-        default: 'r27d'
+        default: 'auto'
         type: choice
-        options: ['r29', 'r28c', 'r27d', 'r26d', 'r25c', 'r24', 'r23c', 'r22b', 'r21e', 'r20b']
+        options: ['auto', 'r29', 'r28c', 'r27d', 'r26d', 'r25c', 'r24', 'r23c', 'r22b', 'r21e', 'r20b']
+
+      gradle_version:
+        description: 'Gradle version (auto detects Wrapper/AGP; otherwise uses the selected fallback)'
+        required: true
+        default: 'auto'
+        type: choice
+        options: ['auto', '2.10', '2.14.1', '3.3', '3.5', '4.1', '4.10.3', '5.6.4', '6.9.4', '7.0', '7.6.4', '8.0', '8.2', '8.4', '8.6', '8.7', '8.9', '8.11.1', '8.14.3', '9.1.0', '9.4.0', '9.6.0']
 
 permissions:
   contents: read
@@ -129,8 +143,27 @@ env:
 
 jobs:
   setup-matrix:
+    name: "Resolve • ${{ inputs.repository || github.repository }} • ${{ inputs.module || 'auto modules' }} • ${{ inputs.build_type }}"
     runs-on: ubuntu-latest
     outputs:
+      agp_version: ${{ steps.toolchain.outputs.agp_version }}
+      agp_detection_status: ${{ steps.toolchain.outputs.agp_detection_status }}
+      agp_required_gradle: ${{ steps.toolchain.outputs.agp_required_gradle }}
+      wrapper_gradle_version: ${{ steps.toolchain.outputs.wrapper_gradle_version }}
+      wrapper_detection_status: ${{ steps.toolchain.outputs.wrapper_detection_status }}
+      gradle_version_status: ${{ steps.toolchain.outputs.gradle_version_status }}
+      toolchain_compatibility_status: ${{ steps.toolchain.outputs.toolchain_compatibility_status }}
+      resolved_gradle_version: ${{ steps.toolchain.outputs.resolved_gradle_version }}
+      gradle_source: ${{ steps.toolchain.outputs.gradle_source }}
+      gradle_install_mode: ${{ steps.toolchain.outputs.gradle_install_mode }}
+      resolved_jdk_version: ${{ steps.toolchain.outputs.resolved_jdk_version }}
+      jdk_source: ${{ steps.toolchain.outputs.jdk_source }}
+      use_wrapper: ${{ steps.toolchain.outputs.use_wrapper }}
+      toolchain_warning: ${{ steps.toolchain.outputs.toolchain_warning }}
+      resolved_ndk_version: ${{ steps.ndk.outputs.resolved_ndk_version }}
+      resolved_ndk_revision: ${{ steps.ndk.outputs.resolved_ndk_revision }}
+      ndk_version_source: ${{ steps.ndk.outputs.ndk_version_source }}
+      ndk_detection_status: ${{ steps.ndk.outputs.ndk_detection_status }}
       matrix: ${{ steps.meta.outputs.matrix }}
       repository: ${{ steps.meta.outputs.repository }}
       repository_name: ${{ steps.meta.outputs.repository_name }}
@@ -162,7 +195,7 @@ jobs:
           ref: ${{ inputs.branch }}
           path: source
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
-          submodules: recursive
+          submodules: ${{ inputs.submodules }}
 
       - name: Checkout target repository at default branch
         if: ${{ inputs.branch == '' }}
@@ -171,7 +204,7 @@ jobs:
           repository: ${{ inputs.repository || github.repository }}
           path: source
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
-          submodules: recursive
+          submodules: ${{ inputs.submodules }}
 
       - name: Diagnose checkout failure
         if: ${{ failure() }}
@@ -188,6 +221,16 @@ jobs:
           fi
           echo "For public repositories, the default github.token is usually enough."
           echo "For private target repositories or private submodules, create a repository secret named CHECKOUT_TOKEN with read access to the target repository and its submodules."
+
+      - name: Verify target submodules
+        shell: bash
+        working-directory: source
+        env:
+          CHECKOUT_SUBMODULES: ${{ inputs.submodules }}
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+        run: |
+          set -euo pipefail
+          bash "$CI_HELPERS_DIR/verify-submodules.sh"
 
       - name: Resolve checked out source
         id: source
@@ -218,13 +261,50 @@ jobs:
           echo "source_short_sha=$SOURCE_SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "Checked out source: ref=$SOURCE_REF sha=$SOURCE_SHA"
 
+      - name: Test toolchain version resolver
+        shell: bash
+        env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+        run: |
+          set -euo pipefail
+          python3 "$CI_HELPERS_DIR/tests/test-resolve-toolchain.py"
+
+      - name: Resolve AGP, Gradle and JDK compatibility
+        id: toolchain
+        shell: bash
+        working-directory: source
+        env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          REQUESTED_GRADLE_VERSION: ${{ inputs.gradle_version }}
+          REQUESTED_JDK_VERSION: ${{ inputs.jdk_version }}
+        run: |
+          set -euo pipefail
+          python3 "$CI_HELPERS_DIR/resolve-toolchain.py" \
+            --gradle-version "$REQUESTED_GRADLE_VERSION" \
+            --jdk-version "$REQUESTED_JDK_VERSION"
+
+      - name: Resolve project NDK version
+        id: ndk
+        shell: bash
+        working-directory: source
+        env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
+        run: |
+          set -euo pipefail
+          python3 "$CI_HELPERS_DIR/resolve-ndk.py" --requested "$REQUESTED_NDK_VERSION" --fallback r27d
+
       - name: Prepare Android CI toolchain
         uses: ./.android-ci-workflow/.github/actions/android-ci-prepare
         with:
           helpers_dir: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           runner_label: ubuntu-latest
-          jdk_version: ${{ inputs.jdk_version }}
-          ndk_version: ${{ inputs.ndk_version }}
+          jdk_version: ${{ steps.toolchain.outputs.resolved_jdk_version }}
+          ndk_version: ${{ steps.ndk.outputs.resolved_ndk_version }}
+          gradle_version: ${{ steps.toolchain.outputs.resolved_gradle_version }}
+          use_gradle_wrapper: ${{ steps.toolchain.outputs.use_wrapper }}
+          gradle_install_mode: ${{ steps.toolchain.outputs.gradle_install_mode }}
+          source_sha: ${{ steps.source.outputs.source_sha }}
           run_prebuild: 'false'
 
       - name: Resolve version name
@@ -251,13 +331,17 @@ jobs:
         shell: bash
         working-directory: source
         env:
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          CI_PREFER_WRAPPER: ${{ steps.toolchain.outputs.use_wrapper }}
           INPUT_REPOSITORY: ${{ inputs.repository }}
           INPUT_MODULE: ${{ inputs.module }}
           INPUT_BUILD_FLAVOR: ${{ inputs.build_flavor }}
           INPUT_BUILD_TYPE: ${{ inputs.build_type }}
         run: |
           set -euo pipefail
-          chmod +x ./gradlew
+          GRADLE_COMMAND="$(bash "$CI_HELPERS_DIR/resolve-gradle-command.sh")"
+          export GRADLE_COMMAND
+          echo "Resolved Gradle command: $GRADLE_COMMAND"
 
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -289,7 +373,11 @@ jobs:
               return [item.strip() for item in value.split(",") if item.strip()] if value else []
 
           def run_gradle(*args: str) -> str:
-              cmd = ["./gradlew", "--no-daemon", "--console=plain", *args]
+              gradle_command = os.environ.get("GRADLE_COMMAND", "").strip()
+              if not gradle_command:
+                  print("::error::GRADLE_COMMAND was not resolved.", file=sys.stderr)
+                  sys.exit(1)
+              cmd = [gradle_command, "--no-daemon", "--console=plain", *args]
               proc = subprocess.run(
                   cmd,
                   stdout=subprocess.PIPE,
@@ -553,10 +641,28 @@ jobs:
               "build_test": ${{ toJson(inputs.build_test) }},
               "upload_release": ${{ toJson(inputs.upload_release) }},
               "os_version": ${{ toJson(inputs.os_version) }},
-              "jdk_version": ${{ toJson(inputs.jdk_version) }},
-              "ndk_version": ${{ toJson(inputs.ndk_version) }},
+              "jdk_version_requested": ${{ toJson(inputs.jdk_version) }},
+              "jdk_version": ${{ toJson(steps.toolchain.outputs.resolved_jdk_version) }},
+              "jdk_source": ${{ toJson(steps.toolchain.outputs.jdk_source) }},
+              "ndk_version_requested": ${{ toJson(inputs.ndk_version) }},
+              "ndk_version": ${{ toJson(steps.ndk.outputs.resolved_ndk_version) }},
+              "ndk_revision": ${{ toJson(steps.ndk.outputs.resolved_ndk_revision) }},
+              "ndk_version_source": ${{ toJson(steps.ndk.outputs.ndk_version_source) }},
+              "ndk_detection_status": ${{ toJson(steps.ndk.outputs.ndk_detection_status) }},
+              "gradle_version_requested": ${{ toJson(inputs.gradle_version) }},
+              "gradle_version": ${{ toJson(steps.toolchain.outputs.resolved_gradle_version) }},
+              "gradle_source": ${{ toJson(steps.toolchain.outputs.gradle_source) }},
+              "agp_version": ${{ toJson(steps.toolchain.outputs.agp_version) }},
+              "agp_detection_status": ${{ toJson(steps.toolchain.outputs.agp_detection_status) }},
+              "agp_required_gradle": ${{ toJson(steps.toolchain.outputs.agp_required_gradle) }},
+              "wrapper_gradle_version": ${{ toJson(steps.toolchain.outputs.wrapper_gradle_version) }},
+              "wrapper_detection_status": ${{ toJson(steps.toolchain.outputs.wrapper_detection_status) }},
+              "gradle_version_status": ${{ toJson(steps.toolchain.outputs.gradle_version_status) }},
+              "toolchain_compatibility_status": ${{ toJson(steps.toolchain.outputs.toolchain_compatibility_status) }},
+              "gradle_install_mode": ${{ toJson(steps.toolchain.outputs.gradle_install_mode) }},
+              "toolchain_warning": ${{ toJson(steps.toolchain.outputs.toolchain_warning) }},
               "version_name": ${{ toJson(steps.version.outputs.version_name) }},
-              "checkout_submodules": "recursive"
+              "checkout_submodules": ${{ toJson(inputs.submodules) }}
             }
           RESOLVED_MATRIX: ${{ steps.meta.outputs.matrix }}
         run: |
@@ -565,6 +671,7 @@ jobs:
 
 
   test:
+    name: "Test • AGP ${{ needs.setup-matrix.outputs.agp_version }} • Gradle ${{ needs.setup-matrix.outputs.resolved_gradle_version }} • JDK ${{ needs.setup-matrix.outputs.resolved_jdk_version }}"
     if: ${{ inputs.build_test }}
     needs: setup-matrix
     runs-on: ${{ inputs.os_version }}
@@ -575,7 +682,7 @@ jobs:
           repository: ${{ needs.setup-matrix.outputs.repository }}
           ref: ${{ needs.setup-matrix.outputs.source_sha }}
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
-          submodules: recursive
+          submodules: ${{ inputs.submodules }}
 
       - name: Diagnose checkout failure
         if: ${{ failure() }}
@@ -596,13 +703,25 @@ jobs:
           path: ${{ env.CI_WORKFLOW_CHECKOUT_PATH }}
           persist-credentials: false
 
+      - name: Verify target submodules
+        shell: bash
+        env:
+          CHECKOUT_SUBMODULES: ${{ inputs.submodules }}
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+        run: |
+          set -euo pipefail
+          bash "$CI_HELPERS_DIR/verify-submodules.sh"
+
       - name: Prepare Android CI job
         uses: ./.android-ci-workflow/.github/actions/android-ci-prepare
         with:
           helpers_dir: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           runner_label: ${{ inputs.os_version }}
-          jdk_version: ${{ inputs.jdk_version }}
-          ndk_version: ${{ inputs.ndk_version }}
+          jdk_version: ${{ needs.setup-matrix.outputs.resolved_jdk_version }}
+          ndk_version: ${{ needs.setup-matrix.outputs.resolved_ndk_version }}
+          gradle_version: ${{ needs.setup-matrix.outputs.resolved_gradle_version }}
+          use_gradle_wrapper: ${{ needs.setup-matrix.outputs.use_wrapper }}
+          gradle_install_mode: ${{ needs.setup-matrix.outputs.gradle_install_mode }}
           pre_build_command: ${{ inputs.pre_build_command }}
           go_version: ${{ inputs.go_version }}
           repository_name: ${{ needs.setup-matrix.outputs.repository_name }}
@@ -614,12 +733,14 @@ jobs:
           CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           BUILD_OPTIONS_JSON: ${{ needs.setup-matrix.outputs.build_options_json }}
           SIGNING_UNSIGNED_SCOPE: ${{ needs.setup-matrix.outputs.unsigned_scope }}
+          CI_PREFER_WRAPPER: ${{ needs.setup-matrix.outputs.use_wrapper }}
           GRADLE_TASK: build
         run: |
           set -euo pipefail
           bash "$CI_HELPERS_DIR/run-gradle.sh"
 
   build:
+    name: "Build • ${{ matrix.module }} • ${{ matrix.gradle_task }} • AGP ${{ needs.setup-matrix.outputs.agp_version }} • Gradle ${{ needs.setup-matrix.outputs.resolved_gradle_version }} • JDK ${{ needs.setup-matrix.outputs.resolved_jdk_version }}"
     needs: setup-matrix
     runs-on: ${{ inputs.os_version }}
     strategy:
@@ -633,7 +754,7 @@ jobs:
           repository: ${{ needs.setup-matrix.outputs.repository }}
           ref: ${{ needs.setup-matrix.outputs.source_sha }}
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
-          submodules: recursive
+          submodules: ${{ inputs.submodules }}
 
       - name: Diagnose checkout failure
         if: ${{ failure() }}
@@ -654,13 +775,25 @@ jobs:
           path: ${{ env.CI_WORKFLOW_CHECKOUT_PATH }}
           persist-credentials: false
 
+      - name: Verify target submodules
+        shell: bash
+        env:
+          CHECKOUT_SUBMODULES: ${{ inputs.submodules }}
+          CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+        run: |
+          set -euo pipefail
+          bash "$CI_HELPERS_DIR/verify-submodules.sh"
+
       - name: Prepare Android CI job
         uses: ./.android-ci-workflow/.github/actions/android-ci-prepare
         with:
           helpers_dir: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           runner_label: ${{ inputs.os_version }}
-          jdk_version: ${{ inputs.jdk_version }}
-          ndk_version: ${{ inputs.ndk_version }}
+          jdk_version: ${{ needs.setup-matrix.outputs.resolved_jdk_version }}
+          ndk_version: ${{ needs.setup-matrix.outputs.resolved_ndk_version }}
+          gradle_version: ${{ needs.setup-matrix.outputs.resolved_gradle_version }}
+          use_gradle_wrapper: ${{ needs.setup-matrix.outputs.use_wrapper }}
+          gradle_install_mode: ${{ needs.setup-matrix.outputs.gradle_install_mode }}
           pre_build_command: ${{ inputs.pre_build_command }}
           go_version: ${{ inputs.go_version }}
           repository_name: ${{ needs.setup-matrix.outputs.repository_name }}
@@ -693,6 +826,7 @@ jobs:
           CI_HELPERS_DIR: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
           BUILD_OPTIONS_JSON: ${{ needs.setup-matrix.outputs.build_options_json }}
           SIGNING_UNSIGNED_SCOPE: ${{ needs.setup-matrix.outputs.unsigned_scope }}
+          CI_PREFER_WRAPPER: ${{ needs.setup-matrix.outputs.use_wrapper }}
           GRADLE_TASK: ${{ matrix.module }}:${{ matrix.gradle_task }}
           CI_BUILD_TYPE: ${{ matrix.build_type }}
           CI_ARTIFACT_TYPE: ${{ matrix.artifact_type }}
@@ -710,6 +844,7 @@ jobs:
           if-no-files-found: error
 
   release:
+    name: "Release • ${{ needs.setup-matrix.outputs.repository_name }} • ${{ needs.setup-matrix.outputs.version_name }}"
     if: ${{ inputs.upload_release == true }}
     needs: [setup-matrix, build]
     runs-on: ubuntu-latest

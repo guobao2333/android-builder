@@ -11,17 +11,18 @@
 `android.yml` 此工作流会：
 
 - 通过 `workflow_dispatch` 手动输入触发。
-- 拉取目标仓库，并递归拉取 submodules。
+- 拉取目标仓库，支持关闭、仅拉取直接 submodule 或递归拉取（默认）三种模式。
+- checkout 后显式校验 submodule 状态，并在初始化或权限失败时给出诊断信息。
 - 当 `branch` 为空时，使用目标仓库的默认分支。
 - 支持通过 `CHECKOUT_TOKEN` secret 访问私有仓库或私有 submodules；未配置时回退到 `github.token`。
-- 通过共享的 `.github/actions/android-ci-prepare` composite action 设置 Temurin JDK、Android NDK 和 Gradle 缓存；setup、test、build jobs 共用同一套准备流程。
+- 通过共享的 `.github/actions/android-ci-prepare` composite action 设置 Temurin JDK、Gradle CLI 兜底版本、Android NDK 和 Gradle 缓存；setup、test、build jobs 共用同一套准备流程。
 - 校验请求的 NDK revision 是否完整安装；优先复用 `nttld/setup-ndk` 的本地缓存，只有确实缺失或不完整时才通过 `sdkmanager` 修复或安装。
 - 将公共 CI 逻辑放在 `.github/actions/android-ci-prepare/` 和 `.github/scripts/android-ci/` 中，避免 NDK 校验、pre-build 解析、Gradle 参数解析、unsigned 参数处理和 summary 渲染在多个 job 中重复。
 - 解析源码元信息：branch/ref、完整 SHA、短 SHA、仓库名和版本名。
 - 从 `gradle.properties` 读取 `versionName`、`VERSION_NAME` 或 `version`；都不存在时使用 GitHub run number 作为 `version_name`。
 - 通过 Gradle task introspection 识别 Android Application 模块和真实 build variants。
 - 使用 matrix 并行构建匹配的 variants。
-- 可选先运行一次完整的 `./gradlew build` 测试任务。
+- 可选先运行一次完整的 `gradle build` 测试任务。
 - 可选在 Gradle 构建前运行 pre-build 命令，包括适配 NekoBox 风格 `libcore` 构建的 auto 模式。
 - 默认只对 release/AAB 或 `build`/`assemble`/`bundle` 这类聚合任务追加 `-Punsigned`；debug 保留 Android/Gradle 默认测试签名，只有失败且疑似签名问题时才重试兜底。
 - 上传 APK / AAB 为 GitHub Actions artifacts。
@@ -67,18 +68,20 @@ workflow 会把运行 workflow 的仓库按 `github.sha` checkout 到单独的 h
 |---|---|:---:|:---:|
 | **repository** | 目标仓库，格式为 `owner/repo`。留空则使用运行此 workflow 的仓库。 | `string` | 空 |
 | **branch** | 目标分支、tag 或 SHA。留空则使用目标仓库默认分支。 | `string` | 空 |
+| **submodules** | Git submodule 拉取模式：`false` 禁用，`true` 仅拉取直接 submodule，`recursive` 递归拉取嵌套 submodule。 | choice: `false`, `true`, `recursive` | `recursive` |
 | **module** | 目标模块，支持逗号分隔。可写 `app` 或 `:app`。为空时自动探测可安装的 Android Application 模块。 | `string` | `app` |
 | **build_flavor** | build flavor 过滤器，支持逗号分隔。留空表示接受所有 flavor。匹配逻辑会规范化后做子串匹配。 | `string` | 空 |
 | **build_type** | 构建产物选择器。 | choice: `debug`, `release`, `aab`, `all` | `debug` |
-| **build_options** | 附加到 `./gradlew build` 和具体构建任务后的额外 Gradle 参数。支持 shell 风格引号或字符串组成的 JSON 数组。 | `string` | 空 |
+| **build_options** | 附加到 `gradle build` 和具体构建任务后的额外 Gradle 参数。支持 shell 风格引号或字符串组成的 JSON 数组。 | `string` | 空 |
 | **signing** | 是否允许 release 签名构建。默认关闭；release/AAB 任务在未检测到完整签名配置时会使用 `-Punsigned`。debug 保留 Android/Gradle 默认测试签名，只在疑似签名失败时重试兜底。 | `boolean` | `false` |
 | **pre_build_command** | Gradle 前置构建命令。可用 `auto`、`none`、`skip` 或自定义 shell 命令。 | `string` | `auto` |
 | **go_version** | 当前置构建需要 Go 时传给 `actions/setup-go` 的 Go 版本。 | `string` | `^1.25` |
-| **build_test** | 是否在 build matrix 前单独运行 `./gradlew build`。 | `boolean` | `false` |
+| **build_test** | 是否在 build matrix 前单独运行 `gradle build`。 | `boolean` | `false` |
 | **upload_release** | 构建成功后是否发布 GitHub Release。 | `boolean` | `false` |
 | **os_version** | test/build job 使用的 runner 镜像。`setup-matrix` 和 `release` 固定使用 `ubuntu-latest`。 | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
-| **jdk_version** | Temurin JDK 版本。 | choice: `26`, `25`, `24`, `23`, `22`, `21`, `17`, `11`, `8` | `21` |
+| **jdk_version** | JDK 版本。`auto` 会根据识别到的 AGP 和 Gradle 选择兼容版本，也可以手动指定。 | choice: `auto`, `8`, `11`, `17`, `21`, `25`, `26`, `27` | `auto` |
 | **ndk_version** | Android NDK alias。 | choice: `r29`, `r28c`, `r27d`, `r26d`, `r25c`, `r24`, `r23c`, `r22b`, `r21e`, `r20b` | `r27d` |
+| **gradle_version** | `auto` 优先采用 Wrapper 声明的版本；没有 Wrapper 时根据 AGP 兼容表选择；两者都无法识别时使用默认 `8.14.3`。手动选择只作用于无 Wrapper 声明的情况。 | choice: `auto`, `2.10`, `2.14.1`, `3.3`, `3.5`, `4.1`, `4.10.3`, `5.6.4`, `6.9.4`, `7.0`, `7.6.4`, `8.0`, `8.2`, `8.4`, `8.6`, `8.7`, `8.9`, `8.11.1`, `8.14.3`, `9.1.0`, `9.4.0`, `9.6.0` | `auto` |
 
 ## Runner 行为
 
@@ -99,10 +102,29 @@ workflow 会把运行 workflow 的仓库按 `github.sha` checkout 到单独的 h
 
 共享准备 action 会在每个需要 Android 工具链的 job 中执行 JDK 设置、`nttld/setup-ndk` 和 NDK 校验。`setup-matrix` 调用时使用 `run_prebuild=false`；`test` 和 `build` 调用时使用 `run_prebuild=true`，因此还会解析、缓存并执行 pre-build 步骤。
 
-NDK 校验 helper 会探测宿主 OS，并检查对应的 NDK 工具链目录：Linux 使用 `linux-x86_64`，macOS 使用 `darwin-x86_64`。NDK alias 由 `.github/scripts/android-ci/ndk_versions.py` 解析。校验时会搜索 canonical SDK 目录、`ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`、`~/.setup-ndk/<alias>`、`~/.setup-ndk/<revision>`、整个 `~/.setup-ndk` 缓存和 `$ANDROID_SDK_ROOT/ndk`。候选目录必须同时满足 `source.properties` 中的 `Pkg.Revision` 等于请求的完整 revision，并且存在对应宿主平台的 LLVM 工具链二进制。如果在 canonical SDK 目录外找到完整缓存，helper 会将其 symlink 到 `$ANDROID_SDK_ROOT/ndk/<full-revision>`，方便 Gradle `ndkVersion` 解析。只有找不到完整候选时，才回退执行 `sdkmanager --install ndk;<full-revision>`。
+NDK 校验 helper 会探测宿主 OS，并检查对应的 NDK 工具链目录：Linux 使用 `linux-x86_64`，macOS 使用 `darwin-x86_64`。NDK 版本默认使用 `auto`：`.github/scripts/android-ci/resolve-ndk.py` 会读取目标项目 Gradle 中的 `ndkVersion` 声明（Groovy/Kotlin DSL、常见根项目变量、Gradle properties 和 Version Catalog 引用），再把解析结果传给 `nttld/setup-ndk` 和校验脚本。项目未声明时回退到 `r27d`；声明无法解析或存在冲突时会明确失败，不会静默安装错误版本。手动选择的 NDK 优先级最高，会覆盖项目检测。别名由 `.github/scripts/android-ci/ndk_versions.py` 映射为完整 SDK revision。校验时会搜索 canonical SDK 目录、`ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`、`~/.setup-ndk/<alias>`、`~/.setup-ndk/<revision>`、整个 `~/.setup-ndk` 缓存和 `$ANDROID_SDK_ROOT/ndk`。候选目录必须同时满足 `source.properties` 中的 `Pkg.Revision` 等于请求的完整 revision，并且存在对应宿主平台的 LLVM 工具链二进制。如果在 canonical SDK 目录外找到完整缓存，helper 会将其 symlink 到 `$ANDROID_SDK_ROOT/ndk/<full-revision>`，方便 Gradle `ndkVersion` 解析。只有找不到完整候选时，才回退执行 `sdkmanager --install ndk;<full-revision>`。
 
 pre-build 缓存 key 包含 `runner.os`、`runner.arch`、仓库名、源码 SHA、请求的 NDK、Go 版本，以及运行时对 `run`、`buildScript`、`libcore` 目录计算出的 SHA256。这样不会在 composite action 中使用 `hashFiles(...)`，也避免 macOS Intel、macOS arm64 和 Linux 运行复用不兼容缓存。
 
+
+## Gradle 与 JDK 兼容性
+
+workflow 会在执行 Gradle 前自动解析 Android 工具链：
+
+1. 项目已有 `gradlew` 和 `gradle-wrapper.properties` 时，优先遵循项目声明；如果缺少 `gradlew`，但 properties 存在，则安装其中声明的 Gradle 版本作为 CLI，而不是直接跳到最新版。
+2. 没有 Wrapper 版本声明时，会从 buildscript classpath、plugins DSL、Gradle properties/变量以及 `gradle/*.versions.toml` 版本目录识别 AGP，并按 Android 官方兼容表选择最低所需 Gradle。
+3. AGP 和 Wrapper 都无法识别时，`gradle_version=auto` 使用内置默认版本 `8.14.3`。手动选择 `gradle_version` 只覆盖无 Wrapper 声明时的回退版本，不会改写项目 Wrapper。
+4. `jdk_version=auto` 会综合所选 Gradle 的运行时 Java 范围和 AGP 的最低 JDK 要求自动选择。仍支持手动指定，但不兼容时会输出警告。
+5. 检测状态分为 `detected`、`unknown` 和 `not-present`。如果 `gradlew` 存在但无法读取 Wrapper 的 Gradle 版本，自动 JDK 选择会失败并要求手动指定 `jdk_version`；也可以手动指定 `gradle_version`，绕过未知 Wrapper 改用 CLI。
+6. 如果 AGP 与 Wrapper 版本均未知，工具链兼容状态不会标记为 verified；未知值不会参与版本比较。
+
+内置 Gradle 回退菜单覆盖 Gradle 2.x 至 9.x 的代表版本：`2.10`、`2.14.1`、`3.3`、`3.5`、`4.1`、`4.10.3`、`5.6.4`、`6.9.4`、`7.0`、`7.6.4`、`8.0`、`8.2`、`8.4`、`8.6`、`8.7`、`8.9`、`8.11.1`、`8.14.3`、`9.1.0`、`9.4.0`、`9.6.0`。AGP 自动检测也可能选择菜单之外的精确最低版本。
+
+低于 6.0 的 Gradle 会走旧版发行包安装和缓存流程，避免依赖现代 Gradle 初始化脚本。workflow 不会改写或生成目标仓库的 Wrapper 文件。
+
+## Workflow 流程图与摘要
+
+Actions 可视化流程图的 job 名称也会携带必要上下文：setup 节点显示目标仓库和模块过滤条件；Test/Build 节点显示实际解析出的 AGP、Gradle 与 JDK 版本；Build 节点还显示模块和具体任务。GitHub Job Summary 另外生成 Mermaid 流程图，展示 AGP、Gradle、JDK、模块/variant 数量、构建任务和产物类型，完整输入及 matrix 表格仍保留在下方。
 
 ## build_type 行为
 
@@ -190,7 +212,8 @@ shell 风格格式使用 POSIX shell-like 解析，因此带空格的 quoted val
 当 `build_test=true` 时，workflow 会在 build matrix 前运行独立的 `test` job：
 
 ```bash
-./gradlew build --no-daemon --stacktrace <按任务解析后的 Gradle options>
+./gradlew build   # 项目存在 Wrapper 时
+gradle build      # 缺少 ./gradlew 时自动回退
 ```
 
 测试 job 会 checkout `setup-matrix` 已解析出的精确源码 SHA，设置 JDK/NDK，可选运行同样的前置构建流程，然后运行完整 Gradle build。
@@ -201,6 +224,7 @@ shell 风格格式使用 POSIX shell-like 解析，因此带空格的 quoted val
 
 ```bash
 ./gradlew <module>:<gradle_task> --no-daemon --stacktrace <按任务解析后的 Gradle options>
+# 缺少 ./gradlew 时会使用 gradle 执行相同参数
 ```
 
 产物从对应模块目录上传：
@@ -242,7 +266,7 @@ summary 包含：
 - Source SHA。
 - module、flavor、build type、原始 build options、基础 Gradle options、按任务签名决策、unsigned scope、pre-build command 和 Go 版本。
 - build/test/release 选项。
-- Runner label、JDK、请求的 NDK、解析出的 NDK revision 和 `ANDROID_NDK_HOME`。
+- Runner label、JDK、请求的 NDK、解析出的 NDK revision、`ANDROID_NDK_HOME`、Gradle CLI 兜底版本和 submodule 模式。
 - version name。
 - 最终 build matrix：module、flavor、build type、artifact type、Gradle task 和 artifact name。
 
@@ -323,7 +347,9 @@ POST /repos/{owner}/{repo}/actions/workflows/android.yml/dispatches
     "upload_release": "false",
     "os_version": "ubuntu-latest",
     "jdk_version": "21",
-    "ndk_version": "r27d"
+    "ndk_version": "r27d",
+    "gradle_version": "8.14.3",
+    "submodules": "recursive"
   }
 }
 ```
@@ -354,15 +380,19 @@ gh workflow run android.yml \
   -f upload_release=false \
   -f os_version=ubuntu-latest \
   -f jdk_version=21 \
-  -f ndk_version=r27d
+  -f ndk_version=r27d \
+  -f gradle_version=8.14.3 \
+  -f submodules=recursive
 ```
 
 ## 常见失败原因
 
 - 目标仓库不存在或无权限访问。
 - 目标分支、tag 或 SHA 不存在。
-- 私有仓库或 submodule 需要 `CHECKOUT_TOKEN`。
-- 模块名拼写错误，或模块不存在于 `./gradlew projects` 输出中。
+- 私有仓库或 submodule 需要具备目标仓库及所有私有 submodule 读取权限的 `CHECKOUT_TOKEN`。
+- submodule 仍未初始化或指向不存在的 commit；检查 `.gitmodules` URL 及 `CHECKOUT_TOKEN` 权限。
+- AGP 声明方式较特殊或无法识别时，可以手动指定 `gradle_version` 和/或 `jdk_version`。
+- 模块名拼写错误，或模块不存在于 Gradle 的 `projects` 输出中.
 - 请求的模块不是可安装 Android Application 模块。
 - 请求的 flavor/build type 组合不存在。
 - `build_options` 引号 / JSON 语法无效，或包含 Gradle 无法识别的参数。

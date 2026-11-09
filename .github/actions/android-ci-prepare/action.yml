@@ -13,6 +13,15 @@ inputs:
   ndk_version:
     description: NDK version or alias to install and verify.
     required: true
+  gradle_version:
+    description: Resolved Gradle version for this project.
+    required: true
+  use_gradle_wrapper:
+    description: Use the checked-out Gradle Wrapper instead of a system Gradle CLI.
+    required: true
+  gradle_install_mode:
+    description: Toolchain mode (wrapper, setup-gradle, legacy, or legacy-wrapper).
+    required: true
   run_prebuild:
     description: Whether to resolve, cache, and run the pre-build command.
     required: false
@@ -49,9 +58,58 @@ runs:
       with:
         java-version: ${{ inputs.jdk_version }}
         distribution: temurin
-        cache: gradle
+
+    - name: Setup Gradle Wrapper
+      if: ${{ inputs.use_gradle_wrapper == 'true' && inputs.gradle_install_mode == 'wrapper' }}
+      uses: gradle/actions/setup-gradle@v6
+      with:
+        cache-provider: basic
+
+    - name: Setup Gradle CLI
+      if: ${{ inputs.gradle_install_mode == 'setup-gradle' }}
+      uses: gradle/actions/setup-gradle@v6
+      with:
+        gradle-version: ${{ inputs.gradle_version }}
+        cache-provider: basic
+
+    - name: Cache legacy Gradle files
+      if: ${{ inputs.gradle_install_mode == 'legacy' || inputs.gradle_install_mode == 'legacy-wrapper' }}
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+          ${{ runner.temp }}/gradle-cli/gradle-${{ inputs.gradle_version }}
+        key: legacy-gradle-${{ runner.os }}-${{ runner.arch }}-${{ inputs.gradle_version }}-${{ inputs.source_sha }}
+        restore-keys: |
+          legacy-gradle-${{ runner.os }}-${{ runner.arch }}-${{ inputs.gradle_version }}-
+
+    - name: Install legacy Gradle CLI
+      if: ${{ inputs.gradle_install_mode == 'legacy' }}
+      shell: bash
+      env:
+        GRADLE_VERSION: ${{ inputs.gradle_version }}
+        GRADLE_INSTALL_DIR: ${{ runner.temp }}/gradle-cli/gradle-${{ inputs.gradle_version }}
+      run: |
+        set -euo pipefail
+        if [ ! -x "$GRADLE_INSTALL_DIR/bin/gradle" ]; then
+          mkdir -p "$(dirname "$GRADLE_INSTALL_DIR")"
+          rm -rf "$GRADLE_INSTALL_DIR"
+          archive="$RUNNER_TEMP/gradle-$GRADLE_VERSION-bin.zip"
+          extract_dir="$RUNNER_TEMP/gradle-extract-$GRADLE_VERSION"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://services.gradle.org/distributions/gradle-$GRADLE_VERSION-bin.zip" \
+            --output "$archive"
+          rm -rf "$extract_dir"
+          mkdir -p "$extract_dir"
+          unzip -q "$archive" -d "$extract_dir"
+          mv "$extract_dir/gradle-$GRADLE_VERSION" "$GRADLE_INSTALL_DIR"
+          rm -rf "$extract_dir" "$archive"
+        fi
+        echo "$GRADLE_INSTALL_DIR/bin" >> "$GITHUB_PATH"
 
     - name: Setup NDK
+      id: setup_ndk
       uses: nttld/setup-ndk@v1
       with:
         ndk-version: ${{ inputs.ndk_version }}
@@ -64,6 +122,7 @@ runs:
       env:
         CI_HELPERS_DIR: ${{ inputs.helpers_dir }}
         REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
+        SETUP_NDK_PATH: ${{ steps.setup_ndk.outputs['ndk-path'] }}
       run: |
         set -euo pipefail
         bash "$CI_HELPERS_DIR/verify-ndk.sh"
