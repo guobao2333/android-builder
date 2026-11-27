@@ -46,7 +46,7 @@ class ResolveFlutterTests(unittest.TestCase):
                     "version": "3.47.7",
                     "dart_sdk_version": "3.13.5",
                     "dart_sdk_arch": "x64",
-                    "hash": "older-hash",
+                    "hash": "abcdef1234567890abcdef1234567890abcdef12",
                 },
             ]
         }
@@ -92,17 +92,22 @@ class ResolveFlutterTests(unittest.TestCase):
     def test_unpinned_project_uses_latest_stable(self):
         result = self.resolve()
         self.assertEqual(result["flutter_version"], "3.50.1")
-        self.assertEqual(result["flutter_version_source"], "latest stable (no project pin found")
+        self.assertEqual(result["flutter_version_source"], "latest stable (no project pin found)")
 
     def test_flutter_release_below_locked_dart_minimum_fails(self):
-        self.write(".metadata", 'version:\n  revision: "older-hash"\n  channel: "stable"\n')
+        self.write(".metadata", 'version:\n  revision: "abcdef1234567890abcdef1234567890abcdef12"\n  channel: "stable"\n')
         self.write("pubspec.lock", 'sdks:\n  dart: ">=3.13.7 <4.0.0"\n')
         with self.assertRaisesRegex(ValueError, "below the project's locked minimum"):
             self.resolve()
 
     def test_unknown_metadata_revision_fails_instead_of_using_latest(self):
-        self.write(".metadata", 'version:\n  revision: "unknown-revision"\n  channel: "stable"\n')
+        self.write(".metadata", 'version:\n  revision: "1111111111111111111111111111111111111111"\n  channel: "stable"\n')
         with self.assertRaisesRegex(ValueError, "no Linux x64 release matching revision"):
+            self.resolve()
+
+    def test_invalid_metadata_revision_fails_instead_of_using_latest(self):
+        self.write(".metadata", 'version:\n  revision: "not-a-git-sha"\n  channel: "stable"\n')
+        with self.assertRaisesRegex(ValueError, "Invalid Flutter git revision"):
             self.resolve()
 
     def test_manual_channel_and_exact_version(self):
