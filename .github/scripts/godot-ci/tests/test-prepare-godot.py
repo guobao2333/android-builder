@@ -80,6 +80,41 @@ class PrepareGodotTests(unittest.TestCase):
             self.assertEqual(global_data["sdk"]["rollForward"], "latestFeature")
             self.assertIn("global.json", change)
 
+    def test_android_texture_import_setting_is_added_when_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = '[application]\nconfig/name="Sample"\n'
+            self.write(root, "project.godot", original)
+            changed = MODULE.ensure_android_texture_import(root)
+            updated = (root / "project.godot").read_text(encoding="utf-8")
+            self.assertTrue(changed)
+            self.assertIn("[rendering]\ntextures/vram_compression/import_etc2_astc=true", updated)
+
+    def test_android_texture_import_setting_is_enabled_when_false(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "project.godot",
+                '[application]\nconfig/name="Sample"\n\n[rendering]\nrenderer/rendering_method="gl_compatibility"\ntextures/vram_compression/import_etc2_astc=false\n\n[display]\nwindow/size/viewport_width=1280\n',
+            )
+            changed = MODULE.ensure_android_texture_import(root)
+            updated = (root / "project.godot").read_text(encoding="utf-8")
+            self.assertTrue(changed)
+            self.assertEqual(updated.count("textures/vram_compression/import_etc2_astc=true"), 1)
+            self.assertNotIn("textures/vram_compression/import_etc2_astc=false", updated)
+            self.assertIn("[display]", updated)
+
+    def test_android_texture_import_setting_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = '[rendering]\ntextures/vram_compression/import_etc2_astc=true\n'
+            self.write(root, "project.godot", original)
+            changed = MODULE.ensure_android_texture_import(root)
+            updated = (root / "project.godot").read_text(encoding="utf-8")
+            self.assertFalse(changed)
+            self.assertEqual(updated, original)
+
     def test_generates_android_arm64_preset_when_absent(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
