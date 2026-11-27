@@ -37,6 +37,12 @@ on:
         required: false
         default: false
         type: boolean
+      android_renderer:
+        description: "Android renderer; Skia is the compatibility fallback for Impeller/Vulkan black screens"
+        required: true
+        default: "skia"
+        type: choice
+        options: ["skia", "impeller"]
 
   workflow_call:
     inputs:
@@ -68,6 +74,10 @@ on:
         type: boolean
         required: false
         default: false
+      android_renderer:
+        type: string
+        required: false
+        default: "skia"
 
 permissions:
   contents: read
@@ -174,6 +184,17 @@ jobs:
           ref: ${{ github.sha }}
           path: .ci-workflow
           persist-credentials: false
+
+      - name: Configure Android renderer
+        id: renderer
+        shell: bash
+        env:
+          ANDROID_RENDERER: ${{ inputs.android_renderer }}
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/.ci-workflow/.github/scripts/flutter-ci/configure-android-renderer.py" \
+            --root . \
+            --backend "$ANDROID_RENDERER"
 
       - name: Setup JDK 17
         uses: actions/setup-java@v5
