@@ -19,6 +19,181 @@ def read_text(path: Path) -> str:
         return ""
 
 
+EXCLUDED_PROJECT_DIRS = {".git", ".godot", ".ci-workflow", "bin", "obj", "build", "node_modules"}
+
+
+def find_csproj_files(root: Path) -> list[Path]:
+    return sorted(
+        path for path in root.rglob("*.csproj")
+        if not any(part in EXCLUDED_PROJECT_DIRS for part in path.relative_to(root).parts)
+    )
+
+
+def parse_tfm(value: str) -> tuple[tuple[int, int], str] | None:
+    match = re.fullmatch(r"net(\d+)(?:\.(\d+))?([-+].*)?", value.strip(), re.I)
+    if not match:
+        return None
+    digits, minor, suffix = match.groups()
+    if minor is None:
+        if len(digits) < 2:
+            major, minor_value = digits, "0"
+        else:
+            major, minor_value = digits[:-1], digits[-1]
+    else:
+        major, minor_value = digits, minor
+    return (int(major), int(minor_value)), suffix or ""
+
+
+def required_android_tfm(godot_version: str) -> str:
+    version = tuple(int(part) for part in godot_version.split(".")[:2])
+    if version[0] != 4:
+        raise ValueError(f"Android C# export compatibility is not defined for Godot {godot_version}.")
+    if version[1] >= 8:
+        return "net10.0"
+    if version[1] >= 5:
+        return "net9.0"
+    return "net8.0"
+
+
+def rewrite_android_target_frameworks(path: Path, required_tfm: str) -> tuple[list[str], bool]:
+    content = read_text(path)
+    required_match = parse_tfm(required_tfm)
+    if required_match is None:
+        raise ValueError(f"Unsupported Android target framework requirement: {required_tfm}")
+    required_version, _ = required_match
+    found: list[str] = []
+    changed = False
+    pattern = re.compile(r"(?is)(<TargetFrameworks?>)(.*?)(</TargetFrameworks?>)")
+
+    def replace(match: re.Match[str]) -> str:
+        nonlocal changed
+        updated_parts = []
+        for raw_part in match.group(2).split(";"):
+            leading = raw_part[:len(raw_part) - len(raw_part.lstrip())]
+            trailing = raw_part[len(raw_part.rstrip()):]
+            value = raw_part.strip()
+            parsed = parse_tfm(value)
+            if parsed:
+                current_version, suffix = parsed
+                if current_version[0] < 5:
+                    raise ValueError(
+                        f"{path.name} targets legacy framework '{value}', which cannot be safely "
+                        "retargeted for a Godot Android export."
+                    )
+                if current_version < required_version:
+                    value = required_tfm + suffix
+                    changed = True
+            found.append(value)
+            updated_parts.append(leading + value + trailing)
+        return match.group(1) + ";".join(updated_parts) + match.group(3)
+
+    updated = pattern.sub(replace, content)
+    if not found:
+        raise ValueError(
+            f"No explicit TargetFramework/TargetFrameworks was found in {path.name}; "
+            "the Android export target cannot be inferred safely."
+        )
+    if changed:
+        path.write_text(updated, encoding="utf-8")
+    return found, changed
+
+
+def prepare_dotnet_android(
+    root: Path,
+    godot_version: str,
+    is_csharp: bool,
+) -> tuple[str, str, str]:
+    if not is_csharp:
+        return "", "", ""
+
+    projects = find_csproj_files(root)
+    godot_projects: list[Path] = []
+    for path in projects:
+        try:
+            project = ET.parse(path).getroot()
+        except ET.ParseError as exc:
+            raise ValueError(f"Invalid C# project file {path.name}: {exc}") from exc
+        if "Godot.NET.Sdk" in project.attrib.get("Sdk", ""):
+            godot_projects.append(path)
+
+    if not godot_projects:
+        raise ValueError(
+            "A Godot C# project was detected, but no project using Godot.NET.Sdk was found. "
+            "Automatic Android target-framework adaptation is unavailable."
+        )
+
+    required_tfm = required_android_tfm(godot_version)
+    all_frameworks: list[str] = []
+    upgrades: list[str] = []
+    for path in godot_projects:
+        frameworks, changed = rewrite_android_target_frameworks(path, required_tfm)
+        all_frameworks.extend(frameworks)
+        if changed:
+            upgrades.append(path.relative_to(root).as_posix())
+
+    required = parse_tfm(required_tfm)
+    assert required is not None
+    required_major = required[0][0]
+    target_majors = [
+        parsed[0][0]
+        for item in all_frameworks
+        if (parsed := parse_tfm(item)) is not None
+    ]
+    if not target_majors or max(target_majors) < required_major:
+        raise ValueError(
+            f"Godot {godot_version} Android export requires {required_tfm}, "
+            f"but the detected project targets are {', '.join(all_frameworks)}."
+        )
+
+    sdk_version = ""
+    global_json = root / "global.json"
+    global_json_changed = False
+    if global_json.is_file():
+        try:
+            data = json.loads(read_text(global_json))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid global.json: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError("global.json must contain a JSON object.")
+        sdk = data.setdefault("sdk", {})
+        if not isinstance(sdk, dict):
+            raise ValueError("global.json 'sdk' property must be a JSON object.")
+        pinned = str(sdk.get("version", "")).strip()
+        if pinned:
+            match = re.match(r"^(\d+)\.(\d+)\.(\d+)", pinned)
+            if not match:
+                raise ValueError(f"Cannot interpret global.json SDK version: {pinned}")
+            pinned_major = int(match.group(1))
+            required_sdk_major = max(required_major, max(target_majors))
+            if pinned_major < required_sdk_major:
+                old_version = pinned
+                pinned = f"{required_sdk_major}.0.100"
+                sdk["version"] = pinned
+                sdk["rollForward"] = "latestFeature"
+                global_json.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+                global_json_changed = True
+                upgrades.append("global.json")
+                print(
+                    f"Adjusted CI workspace global.json SDK pin from {old_version} to {pinned} "
+                    "to satisfy the Android export target."
+                )
+            sdk_version = pinned
+        else:
+            sdk_version = f"{max(required_major, max(target_majors))}.0.x"
+    else:
+        sdk_version = f"{max(required_major, max(target_majors))}.0.x"
+
+    target_display = ", ".join(dict.fromkeys(all_frameworks))
+    if upgrades:
+        upgrade_display = (
+            f"CI workspace retargeted {', '.join(upgrades)} for Android "
+            f"({required_tfm}); source repository is unchanged"
+        )
+    else:
+        upgrade_display = f"Project already targets {target_display}; no automatic retargeting needed"
+    return sdk_version, target_display, upgrade_display
+
+
 def detect_project(root: Path, requested_version: str) -> tuple[str, bool, str, str]:
     project_file = root / "project.godot"
     if not project_file.is_file():
@@ -30,7 +205,7 @@ def detect_project(root: Path, requested_version: str) -> tuple[str, bool, str, 
 
     sdk_versions: list[str] = []
     frameworks: list[str] = []
-    for csproj in sorted(root.glob("*.csproj")):
+    for csproj in find_csproj_files(root):
         try:
             project = ET.parse(csproj).getroot()
         except ET.ParseError as exc:
@@ -188,6 +363,9 @@ def main() -> int:
 
     try:
         godot_version, is_csharp, dotnet_version, project_name = detect_project(root, args.godot_version)
+        dotnet_version, dotnet_target_framework, dotnet_upgrade = prepare_dotnet_android(
+            root, godot_version, is_csharp
+        )
         preset_name = ensure_android_preset(root, args.preset, args.package_name)
     except ValueError as exc:
         print(f"::error::{exc}", file=sys.stderr)
@@ -208,6 +386,8 @@ def main() -> int:
         "godot_version": godot_version,
         "use_dotnet": "true" if is_csharp else "false",
         "dotnet_version": dotnet_version,
+        "dotnet_target_framework": dotnet_target_framework,
+        "dotnet_upgrade": dotnet_upgrade,
         "project_name": project_name,
         "export_preset": preset_name,
         "matrix": json.dumps(matrix, ensure_ascii=False),
