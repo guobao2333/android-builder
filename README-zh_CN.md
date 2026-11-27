@@ -6,17 +6,22 @@
 
 ---
 
-## 其他 Android 项目类型
+## 项目识别与自动路由
 
-Gradle workflow 面向原生 Android/Gradle 工程。Flutter 和 Godot 使用各自独立的 workflow：
+首次使用或不确定目标仓库属于哪种 Android 工程时，优先运行 **auto.yml（Auto Android Build）**。它会先检查目标仓库，再把同一份源码 SHA 路由到已支持的构建适配器：
 
 | Workflow | 项目类型 | 产物 |
 |---|---|---|
-| android.yml | 使用 Gradle/AGP 的原生 Android 工程 | APK / AAB |
-| flutter.yml | 带 Android 平台目录的 Flutter 工程 | APK / AAB |
-| godot.yml | Godot 4.x 工程（GDScript 和 .NET/C#） | Android APK |
+| auto.yml | 自动识别并路由已支持的项目 | 按项目类型 |
+| android.yml | 根目录 Android Gradle Application 工程 | APK / AAB |
+| flutter.yml | 根目录 Flutter 工程，且包含 Android 平台目录 | APK / AAB |
+| godot.yml | 根目录 Godot 4.x 工程（GDScript 和 .NET/C#） | Android APK |
 
-Flutter CI 默认使用最新 stable channel。Godot CI 优先从 Godot.NET.Sdk 读取引擎版本，否则读取 project.godot；它会复用现有 Android 导出预设，或创建仅用于 CI 工作区的 ARM64 预设，不会提交回目标仓库。
+自动识别不是对任意源码进行猜测式转换。当前识别器会优先识别 Flutter、Godot 和原生 Android，并避免把 React Native、Capacitor、Cordova、Unity、.NET MAUI、纯 Android Library 或未知 Gradle 项目误送到原生 Gradle 工作流。尚无适配器的类型会明确失败并说明检测依据；要构建这类项目，需要增加其框架专用工具链与构建/导出步骤，而不是简单修改 Gradle 命令。
+
+三个专用 workflow 也可以单独运行。Flutter SDK 解析优先遵循 .fvmrc、.fvm/fvm_config.json、pubspec.yaml 中的精确 Flutter 版本，以及 .metadata 中的 Flutter revision；只有没有项目版本锚点时才选择最新 stable。解析结果还会与 pubspec.lock 的 Dart/Flutter SDK 下限核对，并在存在锁文件时使用 flutter pub get --enforce-lockfile。
+
+Godot CI 优先从 Godot.NET.Sdk 读取引擎版本，否则读取 project.godot；它会复用现有 Android 导出预设，或创建仅用于 CI 工作区的 ARM64 预设。Godot C# Android 导出会根据引擎版本检查 .NET Target Framework；必要时只在 CI 临时 checkout 中调整 .csproj 和 global.json，不会提交回目标仓库。当前映射为 Godot 4.5–4.7 使用 net9.0、Godot 4.8+ 使用 net10.0。
 
 自动生成的 Android 预设仅包含最小化的 ARM64 配置。Release 导出需要项目已有的 Android 导出预设，并预先配置有效的 release keystore；当前 workflow 不会把签名凭据注入项目。建议将 keystore 文件和凭据保存在源码仓库之外。
 
@@ -47,7 +52,12 @@ Flutter CI 默认使用最新 stable channel。Godot CI 优先从 Godot.NET.Sdk 
 将工作流和 helper 脚本放在：
 
 ```text
+.github/workflows/auto.yml
 .github/workflows/android.yml
+.github/workflows/flutter.yml
+.github/workflows/godot.yml
+.github/workflows/toolchain-tests.yml
+.github/scripts/project-router/detect-project.py
 .github/actions/android-ci-prepare/action.yml
 .github/scripts/android-ci/ndk_versions.py
 .github/scripts/android-ci/verify-ndk.sh
