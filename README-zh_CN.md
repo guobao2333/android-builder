@@ -104,7 +104,7 @@ workflow 会把运行 workflow 的仓库按 `github.sha` checkout 到单独的 h
 | **upload_release** | 构建成功后是否发布 GitHub Release。 | `boolean` | `false` |
 | **os_version** | test/build job 使用的 runner 镜像。`setup-matrix` 和 `release` 固定使用 `ubuntu-latest`。 | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
 | **jdk_version** | JDK 版本。`auto` 会根据识别到的 AGP 和 Gradle 选择兼容版本，也可以手动指定。 | choice: `auto`, `8`, `11`, `17`, `21`, `25`, `26`, `27` | `auto` |
-| **ndk_version** | Android NDK alias。 | choice: `r29`, `r28c`, `r27d`, `r26d`, `r25c`, `r24`, `r23c`, `r22b`, `r21e`, `r20b` | `r27d` |
+| **ndk_version** | Android NDK alias。 | choice: `r29`, `r28c`, `r27d`, `r26d`, `r25c`, `r24`, `r23c`, `r22b`, `r21e`, `r20b` | `auto` |
 | **gradle_version** | `auto` 优先采用 Wrapper 声明的版本；没有 Wrapper 时根据 AGP 兼容表选择；两者都无法识别时使用默认 `8.14.3`。手动选择只作用于无 Wrapper 声明的情况。 | choice: `auto`, `2.10`, `2.14.1`, `3.3`, `3.5`, `4.1`, `4.10.3`, `5.6.4`, `6.9.4`, `7.0`, `7.6.4`, `8.0`, `8.2`, `8.4`, `8.6`, `8.7`, `8.9`, `8.11.1`, `8.14.3`, `9.1.0`, `9.4.0`, `9.6.0` | `auto` |
 
 ## Runner 行为
