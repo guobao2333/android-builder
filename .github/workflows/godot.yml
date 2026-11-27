@@ -37,6 +37,37 @@ on:
         type: choice
         options: ["debug", "release", "all"]
 
+  workflow_call:
+    inputs:
+      repository:
+        type: string
+        required: false
+        default: ""
+      branch:
+        type: string
+        required: false
+        default: ""
+      submodules:
+        type: string
+        required: false
+        default: "recursive"
+      godot_version:
+        type: string
+        required: false
+        default: "auto"
+      export_preset:
+        type: string
+        required: false
+        default: "auto"
+      package_name:
+        type: string
+        required: false
+        default: "org.godotengine.androidbuilder"
+      build_type:
+        type: string
+        required: false
+        default: "debug"
+
 permissions:
   contents: read
 
