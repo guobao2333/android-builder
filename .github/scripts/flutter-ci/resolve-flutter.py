@@ -102,14 +102,17 @@ def read_metadata_revision(root: Path) -> tuple[str, str] | None:
     metadata = read_text(root / ".metadata")
     if not metadata:
         return None
-    revision_match = re.search(r'(?m)^[ \t]+revision:\s*["\']?([0-9a-f]{7,40})["\']?\s*$', metadata, re.I)
+    revision_line = re.search(r"(?m)^[ \t]+revision:\s*(.*?)\s*$", metadata)
     channel_match = re.search(r'(?m)^[ \t]+channel:\s*["\']?([A-Za-z]+)["\']?\s*$', metadata)
-    if not revision_match:
+    if not revision_line:
         return None
+    revision = revision_line.group(1).strip().strip("\"'")
+    if not re.fullmatch(r"[0-9a-f]{7,40}", revision, re.I):
+        raise ValueError(f"Invalid Flutter git revision in .metadata: {revision!r}")
     channel = channel_match.group(1).lower() if channel_match else "stable"
     if channel not in CHANNELS:
         raise ValueError(f"Unsupported Flutter channel in .metadata: {channel}")
-    return revision_match.group(1), channel
+    return revision, channel
 
 
 def load_manifest(manifest_file: str = "", manifest_url: str = MANIFEST_URL) -> dict[str, Any]:
