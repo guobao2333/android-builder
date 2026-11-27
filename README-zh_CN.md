@@ -6,6 +6,20 @@
 
 ---
 
+## 其他 Android 项目类型
+
+Gradle workflow 面向原生 Android/Gradle 工程。Flutter 和 Godot 使用各自独立的 workflow：
+
+| Workflow | 项目类型 | 产物 |
+|---|---|---|
+| android.yml | 使用 Gradle/AGP 的原生 Android 工程 | APK / AAB |
+| flutter.yml | 带 Android 平台目录的 Flutter 工程 | APK / AAB |
+| godot.yml | Godot 4.x 工程（GDScript 和 .NET/C#） | Android APK |
+
+Flutter CI 默认使用最新 stable channel。Godot CI 优先从 Godot.NET.Sdk 读取引擎版本，否则读取 project.godot；它会复用现有 Android 导出预设，或创建仅用于 CI 工作区的 ARM64 预设，不会提交回目标仓库。
+
+Godot Release 签名可在运行 workflow 的仓库中配置以下 Secrets：GODOT_ANDROID_KEYSTORE_RELEASE_PATH、GODOT_ANDROID_KEYSTORE_RELEASE_USER 和 GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD。
+
 ## 工作流运行原理概览
 
 `android.yml` 此工作流会：
@@ -75,7 +89,7 @@ workflow 会把运行 workflow 的仓库按 `github.sha` checkout 到单独的 h
 | **build_options** | 附加到 `gradle build` 和具体构建任务后的额外 Gradle 参数。支持 shell 风格引号或字符串组成的 JSON 数组。 | `string` | 空 |
 | **signing** | 是否允许 release 签名构建。默认关闭；release/AAB 任务在未检测到完整签名配置时会使用 `-Punsigned`。debug 保留 Android/Gradle 默认测试签名，只在疑似签名失败时重试兜底。 | `boolean` | `false` |
 | **pre_build_command** | Gradle 前置构建命令。可用 `auto`、`none`、`skip` 或自定义 shell 命令。 | `string` | `auto` |
-| **go_version** | 当前置构建需要 Go 时传给 `actions/setup-go` 的 Go 版本。 | `string` | `^1.25` |
+| **go_version** | 当前置构建需要 Go 时传给 `actions/setup-go` 的 Go 版本。 | `string` | `stable` |
 | **build_test** | 是否在 build matrix 前单独运行 `gradle build`。 | `boolean` | `false` |
 | **upload_release** | 构建成功后是否发布 GitHub Release。 | `boolean` | `false` |
 | **os_version** | test/build job 使用的 runner 镜像。`setup-matrix` 和 `release` 固定使用 `ubuntu-latest`。 | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
@@ -307,7 +321,7 @@ build_type: all
 module: app
 build_type: release
 pre_build_command: auto
-go_version: ^1.25
+go_version: stable
 ```
 
 ### 5. 运行自定义前置构建命令
@@ -342,7 +356,7 @@ POST /repos/{owner}/{repo}/actions/workflows/android.yml/dispatches
     "build_options": "--info '-Pchannel=free beta'",
     "signing": "false",
     "pre_build_command": "auto",
-    "go_version": "^1.25",
+    "go_version": "stable",
     "build_test": "true",
     "upload_release": "false",
     "os_version": "ubuntu-latest",
@@ -375,7 +389,7 @@ gh workflow run android.yml \
   -f build_options="--info '-Pchannel=free beta'" \
   -f signing=false \
   -f pre_build_command=auto \
-  -f go_version='^1.25' \
+  -f go_version='stable' \
   -f build_test=true \
   -f upload_release=false \
   -f os_version=ubuntu-latest \

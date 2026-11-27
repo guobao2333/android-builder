@@ -6,6 +6,20 @@ This repository contains a manually triggered GitHub Actions workflow for buildi
 
 ---
 
+## Other Android project engines
+
+The Gradle workflow is intended for native Android/Gradle projects. Flutter and Godot use dedicated workflows:
+
+| Workflow | Project type | Output |
+|---|---|---|
+| android.yml | Native Android projects using Gradle/AGP | APK / AAB |
+| flutter.yml | Flutter projects with an Android platform directory | APK / AAB |
+| godot.yml | Godot 4.x projects (GDScript and .NET/C#) | Android APK |
+
+Flutter CI defaults to the latest stable Flutter channel. Godot CI reads the engine version from Godot.NET.Sdk when available, otherwise from project.godot; it reuses an existing Android export preset or creates a temporary CI preset with ARM64 enabled. A generated preset is written only into the checked-out workspace and is not committed to the target repository.
+
+For Godot release signing, configure GODOT_ANDROID_KEYSTORE_RELEASE_PATH, GODOT_ANDROID_KEYSTORE_RELEASE_USER, and GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD as secrets in the workflow repository.
+
 ## What this workflow does
 
 The workflow defined in `android.yml`:
@@ -74,7 +88,7 @@ Shared helper responsibilities:
 | **build_options** | Extra Gradle arguments appended to `gradle build` and build tasks. Accepts shell-style quoting or a JSON array of strings. | `string` | empty |
 | **signing** | Whether release signing is allowed. Defaults to disabled; release/AAB tasks use `-Punsigned` unless a complete signing config is detected. Debug tasks keep Gradle/Android's default debug signing and only retry with `-Punsigned` after a signing-related failure. | `boolean` | `false` |
 | **pre_build_command** | Pre-build command before Gradle. Use `auto`, `none`, `skip`, or a custom shell command. | `string` | `auto` |
-| **go_version** | Go version passed to `actions/setup-go` when the pre-build command needs Go. | `string` | `^1.25` |
+| **go_version** | Go version passed to `actions/setup-go` when the pre-build command needs Go. | `string` | `stable` |
 | **build_test** | Run a separate `gradle build` job before the build matrix. | `boolean` | `false` |
 | **upload_release** | Publish a GitHub Release after successful builds. | `boolean` | `false` |
 | **os_version** | Runner image for test/build jobs. `setup-matrix` and `release` stay on `ubuntu-latest`. | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
@@ -306,7 +320,7 @@ build_type: all
 module: app
 build_type: release
 pre_build_command: auto
-go_version: ^1.25
+go_version: stable
 ```
 
 ### 5. Run a custom pre-build command
@@ -341,7 +355,7 @@ Example payload:
     "build_options": "--info '-Pchannel=free beta'",
     "signing": "false",
     "pre_build_command": "auto",
-    "go_version": "^1.25",
+    "go_version": "stable",
     "build_test": "true",
     "upload_release": "false",
     "os_version": "ubuntu-latest",
@@ -374,7 +388,7 @@ gh workflow run android.yml \
   -f build_options="--info '-Pchannel=free beta'" \
   -f signing=false \
   -f pre_build_command=auto \
-  -f go_version='^1.25' \
+  -f go_version='stable' \
   -f build_test=true \
   -f upload_release=false \
   -f os_version=ubuntu-latest \
