@@ -133,6 +133,7 @@ jobs:
       build_type: ${{ inputs.build_type }}
       flavor: ${{ inputs.flavor }}
       build_test: ${{ inputs.build_test }}
+      android_renderer: skia
     secrets: inherit
 
   godot:
