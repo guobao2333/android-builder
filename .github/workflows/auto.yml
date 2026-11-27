@@ -55,7 +55,7 @@ on:
         options: ["skia", "impeller"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   detect:
