@@ -38,6 +38,37 @@ on:
         default: false
         type: boolean
 
+  workflow_call:
+    inputs:
+      repository:
+        type: string
+        required: false
+        default: ""
+      branch:
+        type: string
+        required: false
+        default: ""
+      submodules:
+        type: string
+        required: false
+        default: "recursive"
+      flutter_version:
+        type: string
+        required: false
+        default: "auto"
+      build_type:
+        type: string
+        required: false
+        default: "debug"
+      flavor:
+        type: string
+        required: false
+        default: ""
+      build_test:
+        type: boolean
+        required: false
+        default: false
+
 permissions:
   contents: read
 
