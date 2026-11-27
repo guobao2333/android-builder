@@ -103,7 +103,7 @@ Shared helper responsibilities:
 | **upload_release** | Publish a GitHub Release after successful builds. | `boolean` | `false` |
 | **os_version** | Runner image for test/build jobs. `setup-matrix` and `release` stay on `ubuntu-latest`. | choice: `ubuntu-latest`, `ubuntu-24.04`, `ubuntu-22.04`, `macos-latest`, `macos-26`, `macos-15`, `macos-26-intel`, `macos-15-intel` | `ubuntu-latest` |
 | **jdk_version** | JDK version. `auto` selects a JDK compatible with the detected AGP and Gradle versions; a number overrides it. | choice: `auto`, `8`, `11`, `17`, `21`, `25`, `26`, `27` | `auto` |
-| **ndk_version** | Android NDK alias. | choice: `r29`, `r28c`, `r27d`, `r26d`, `r25c`, `r24`, `r23c`, `r22b`, `r21e`, `r20b` | `r27d` |
+| **ndk_version** | Android NDK alias. | choice: `r29`, `r28c`, `r27d`, `r26d`, `r25c`, `r24`, `r23c`, `r22b`, `r21e`, `r20b` | `auto` |
 | **gradle_version** | `auto` uses the Wrapper declaration when present, otherwise the detected AGP minimum; if neither is available it uses `8.14.3`. Manual selection applies only when no Wrapper declaration exists. | choice: `auto`, `2.10`, `2.14.1`, `3.3`, `3.5`, `4.1`, `4.10.3`, `5.6.4`, `6.9.4`, `7.0`, `7.6.4`, `8.0`, `8.2`, `8.4`, `8.6`, `8.7`, `8.9`, `8.11.1`, `8.14.3`, `9.1.0`, `9.4.0`, `9.6.0` | `auto` |
 
 ## Runner behavior
