@@ -19,6 +19,25 @@ def read_text(path: Path) -> str:
         return ""
 
 
+def resolve_project_name(project_text: str, fallback: str) -> str:
+    """Remove a trailing Godot feature version from an automatically derived app name."""
+
+    name_match = re.search(r'(?m)^\s*config/name\s*=\s*"([^"]+)"', project_text)
+    project_name = name_match.group(1) if name_match else fallback
+    feature = re.search(
+        r'config/features\s*=\s*PackedStringArray\("(\d+\.\d+(?:\.\d+)?)"',
+        project_text,
+    )
+    if feature:
+        version = re.escape(feature.group(1))
+        project_name = re.sub(
+            rf"\s*\(\s*{version}\s*\)\s*$",
+            "",
+            project_name,
+        ).rstrip()
+    return project_name or fallback
+
+
 EXCLUDED_PROJECT_DIRS = {".git", ".godot", ".ci-workflow", "bin", "obj", "build", "node_modules"}
 
 
@@ -200,8 +219,7 @@ def detect_project(root: Path, requested_version: str) -> tuple[str, bool, str, 
         raise ValueError("No project.godot was found in the target repository.")
 
     project_text = read_text(project_file)
-    name_match = re.search(r'(?m)^\s*config/name\s*=\s*"([^"]+)"', project_text)
-    project_name = name_match.group(1) if name_match else root.name
+    project_name = resolve_project_name(project_text, root.name)
 
     sdk_versions: list[str] = []
     frameworks: list[str] = []
@@ -294,8 +312,7 @@ def ensure_android_preset(root: Path, requested_preset: str, package_name: str) 
 
     preset_id = max((section[0] for section in sections), default=-1) + 1
     project_text = read_text(root / "project.godot")
-    name_match = re.search(r'(?m)^\s*config/name\s*=\s*"([^"]+)"', project_text)
-    display_name = name_match.group(1) if name_match else root.name
+    display_name = resolve_project_name(project_text, root.name)
     safe_package = package_name.strip() or "org.godotengine.androidbuilder"
     if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+", safe_package):
         raise ValueError(f"Invalid Android package name: {safe_package}")

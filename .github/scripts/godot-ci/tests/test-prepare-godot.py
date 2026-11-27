@@ -127,13 +127,13 @@ class PrepareGodotTests(unittest.TestCase):
             self.assertIn('package/unique_name="com.example.fortunemill"', preset)
 
 
-    def test_generated_app_name_uses_project_name_not_godot_engine_version(self):
+    def test_generated_app_name_omits_matching_godot_feature_version(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.write(
                 root,
                 "project.godot",
-                'config/name="Fortune Mill"\\nconfig/features=PackedStringArray("4.5", "C#")\\n',
+                'config/name="Fortune Mill (4.5)"\nconfig/features=PackedStringArray("4.5", "C#")\n',
             )
             godot_version, _, _, project_name = MODULE.detect_project(root, "auto")
             self.assertEqual(godot_version, "4.5.1")
@@ -142,8 +142,19 @@ class PrepareGodotTests(unittest.TestCase):
             MODULE.ensure_android_preset(root, "auto", "com.example.fortunemill")
             preset = (root / "export_presets.cfg").read_text(encoding="utf-8")
             self.assertIn('package/name="Fortune Mill"', preset)
+            self.assertNotIn('package/name="Fortune Mill (4.5)"', preset)
             self.assertIn('version/name="1.0.0"', preset)
-            self.assertNotIn('package/name="Fortune Mill 4.5.1"', preset)
+
+    def test_generated_app_name_preserves_unrelated_parenthetical_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(
+                root,
+                "project.godot",
+                'config/name="Fortune Mill (Deluxe)"\nconfig/features=PackedStringArray("4.5", "C#")\n',
+            )
+            _, _, _, project_name = MODULE.detect_project(root, "auto")
+            self.assertEqual(project_name, "Fortune Mill (Deluxe)")
 
     def test_reuses_existing_android_preset_without_rewriting(self):
         with tempfile.TemporaryDirectory() as tmp:
