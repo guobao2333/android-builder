@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/scripts/android-ci/**'
       - '.github/scripts/godot-ci/**'
+      - '.github/scripts/flutter-ci/**'
       - '.github/workflows/toolchain-tests.yml'
       - '.github/workflows/android.yml'
       - '.github/workflows/flutter.yml'
@@ -15,6 +16,7 @@ on:
     paths:
       - '.github/scripts/android-ci/**'
       - '.github/scripts/godot-ci/**'
+      - '.github/scripts/flutter-ci/**'
       - '.github/workflows/toolchain-tests.yml'
       - '.github/workflows/android.yml'
       - '.github/workflows/flutter.yml'
@@ -32,10 +34,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      - name: Run toolchain resolver tests
+      - name: Run project resolver tests
         shell: bash
         run: |
           set -euo pipefail
           python3 .github/scripts/android-ci/tests/test-resolve-toolchain.py
           python3 .github/scripts/android-ci/tests/test-resolve-ndk.py
+          python3 .github/scripts/flutter-ci/tests/test-resolve-flutter.py
           python3 .github/scripts/godot-ci/tests/test-prepare-godot.py
+          python3 -m compileall -q .github/scripts
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done < <(find .github -type f -name '*.sh' -print0)
+
+      - name: Validate GitHub Actions workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash) latest "$RUNNER_TEMP"
+          "$RUNNER_TEMP/actionlint" -color
