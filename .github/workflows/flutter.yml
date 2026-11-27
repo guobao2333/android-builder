@@ -19,9 +19,9 @@ on:
         type: choice
         options: ["false", "true", "recursive"]
       flutter_version:
-        description: "Flutter SDK version or channel alias"
+        description: "Flutter SDK version or channel alias; auto respects FVM, pubspec and .metadata pins"
         required: true
-        default: "stable"
+        default: "auto"
       build_type:
         description: "Android artifact type"
         required: true
@@ -136,36 +136,36 @@ jobs:
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
           submodules: ${{ inputs.submodules }}
 
+      - name: Checkout workflow helper scripts
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: .ci-workflow
+          persist-credentials: false
+
       - name: Setup JDK 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Resolve Flutter channel and version
+      - name: Resolve Flutter SDK
         id: flutter
         shell: bash
         env:
           REQUESTED_FLUTTER_VERSION: ${{ inputs.flutter_version }}
         run: |
           set -euo pipefail
-          requested="${REQUESTED_FLUTTER_VERSION:-stable}"
-          case "$requested" in
-            stable|beta|main|master)
-              echo "channel=$requested" >> "$GITHUB_OUTPUT"
-              echo "version=" >> "$GITHUB_OUTPUT"
-              ;;
-            *)
-              echo "channel=stable" >> "$GITHUB_OUTPUT"
-              echo "version=$requested" >> "$GITHUB_OUTPUT"
-              ;;
-          esac
+          python3 "$GITHUB_WORKSPACE/.ci-workflow/.github/scripts/flutter-ci/resolve-flutter.py" \
+            --root . \
+            --requested "$REQUESTED_FLUTTER_VERSION"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ steps.flutter.outputs.version }}
-          channel: ${{ steps.flutter.outputs.channel }}
+          flutter-version: ${{ steps.flutter.outputs.flutter_version }}
+          channel: ${{ steps.flutter.outputs.flutter_channel }}
           cache: true
           pub-cache: true
 
@@ -183,7 +183,11 @@ jobs:
             fi
           fi
           flutter --version
-          flutter pub get
+          if [ -f pubspec.lock ]; then
+            flutter pub get --enforce-lockfile
+          else
+            flutter pub get
+          fi
 
       - name: Run Flutter tests
         if: ${{ inputs.build_test }}
