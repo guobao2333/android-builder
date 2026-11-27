@@ -1,0 +1,187 @@
+
+name: Flutter CI
+run-name: "${{ inputs.repository || github.repository }} • Flutter • ${{ inputs.build_type }} • #${{ github.run_number }}"
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "Target Repository (owner/repo)"
+        required: false
+        default: ""
+      branch:
+        description: "Target branch, tag, or SHA"
+        required: false
+        default: ""
+      submodules:
+        description: "Git submodule checkout mode"
+        required: true
+        default: "recursive"
+        type: choice
+        options: ["false", "true", "recursive"]
+      flutter_version:
+        description: "Flutter SDK version or channel alias"
+        required: true
+        default: "stable"
+      build_type:
+        description: "Android artifact type"
+        required: true
+        default: "debug"
+        type: choice
+        options: ["debug", "release", "aab", "all"]
+      flavor:
+        description: "Optional Flutter product flavor"
+        required: false
+        default: ""
+      build_test:
+        description: "Run flutter test before building"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Resolve Flutter source
+    runs-on: ubuntu-latest
+    outputs:
+      repository: ${{ steps.source.outputs.repository }}
+      repository_name: ${{ steps.source.outputs.repository_name }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      source_ref: ${{ steps.source.outputs.source_ref }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.branch }}
+          path: source
+          token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
+          submodules: ${{ inputs.submodules }}
+
+      - name: Verify Flutter project
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f pubspec.yaml ] || ! grep -Eq '^[[:space:]]*flutter:[[:space:]]*$' pubspec.yaml; then
+            echo "::error::No Flutter project was found at the target repository root (pubspec.yaml)."
+            exit 1
+          fi
+          if [ ! -d android ]; then
+            echo "::error::The Flutter project does not contain an Android directory."
+            exit 1
+          fi
+
+      - name: Resolve source metadata
+        id: source
+        working-directory: source
+        shell: bash
+        env:
+          TARGET_REPOSITORY: ${{ inputs.repository || github.repository }}
+          REQUESTED_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          echo "repository=$TARGET_REPOSITORY" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          print("repository_name=" + os.environ["TARGET_REPOSITORY"].rsplit("/", 1)[-1])
+          PY
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          current_branch="$(git branch --show-current || true)"
+          if [ -n "$current_branch" ]; then
+            source_ref="$current_branch"
+          elif [ -n "$REQUESTED_BRANCH" ]; then
+            source_ref="$REQUESTED_BRANCH"
+          else
+            source_ref="default"
+          fi
+          echo "source_ref=$source_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare build matrix
+        id: matrix
+        shell: bash
+        env:
+          BUILD_TYPE: ${{ inputs.build_type }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          selected = os.environ["BUILD_TYPE"]
+          variants = {
+              "debug": {"build_type": "debug", "target": "apk", "mode": "--debug", "artifact_path": "build/app/outputs/flutter-apk/*.apk"},
+              "release": {"build_type": "release", "target": "apk", "mode": "--release", "artifact_path": "build/app/outputs/flutter-apk/*.apk"},
+              "aab": {"build_type": "aab", "target": "appbundle", "mode": "--release", "artifact_path": "build/app/outputs/bundle/release/*.aab"},
+          }
+          include = [variants[key] for key in ("debug", "release", "aab")] if selected == "all" else [variants[selected]]
+          print("matrix=" + json.dumps({"include": include}))
+          PY
+
+  build:
+    name: "Flutter • ${{ matrix.build_type }}"
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout resolved target source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.prepare.outputs.repository }}
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
+          submodules: ${{ inputs.submodules }}
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ inputs.flutter_version }}
+          channel: stable
+          cache: true
+          pub-cache: true
+
+      - name: Resolve Flutter dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f .env ] && [ -f .env.example ]; then
+            cp .env.example .env
+            echo "Created .env from .env.example for CI."
+          fi
+          flutter --version
+          flutter pub get
+
+      - name: Run Flutter tests
+        if: ${{ inputs.build_test }}
+        shell: bash
+        run: flutter test
+
+      - name: Build Android artifact
+        shell: bash
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+          BUILD_MODE: ${{ matrix.mode }}
+          BUILD_FLAVOR: ${{ inputs.flavor }}
+        run: |
+          set -euo pipefail
+          command=(flutter build "$BUILD_TARGET" "$BUILD_MODE")
+          if [ -n "$BUILD_FLAVOR" ]; then command+=(--flavor "$BUILD_FLAVOR"); fi
+          "${command[@]}"
+
+      - name: Upload Flutter artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.prepare.outputs.repository_name }}-flutter-${{ matrix.build_type }}-${{ github.run_number }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          retention-days: 14
