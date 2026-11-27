@@ -13,6 +13,7 @@ on:
       - '.github/workflows/android.yml'
       - '.github/workflows/flutter.yml'
       - '.github/workflows/godot.yml'
+      - '.github/workflows/auto.yml'
   pull_request:
     paths:
       - '.github/scripts/android-ci/**'
@@ -23,6 +24,7 @@ on:
       - '.github/workflows/android.yml'
       - '.github/workflows/flutter.yml'
       - '.github/workflows/godot.yml'
+      - '.github/workflows/auto.yml'
   workflow_dispatch:
 
 permissions:
