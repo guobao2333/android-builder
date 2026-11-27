@@ -19,7 +19,7 @@
 
 自动识别不是对任意源码进行猜测式转换。当前识别器会优先识别 Flutter、Godot 和原生 Android，并避免把 React Native、Capacitor、Cordova、Unity、.NET MAUI、纯 Android Library 或未知 Gradle 项目误送到原生 Gradle 工作流。尚无适配器的类型会明确失败并说明检测依据；要构建这类项目，需要增加其框架专用工具链与构建/导出步骤，而不是简单修改 Gradle 命令。
 
-三个专用 workflow 也可以单独运行。Flutter SDK 解析优先遵循 .fvmrc、.fvm/fvm_config.json、pubspec.yaml 中的精确 Flutter 版本，以及 .metadata 中的 Flutter revision；只有没有项目版本锚点时才选择最新 stable。解析结果还会与 pubspec.lock 的 Dart/Flutter SDK 下限核对，并在存在锁文件时使用 flutter pub get --enforce-lockfile。
+三个专用 workflow 也可以单独运行。Flutter SDK 解析优先遵循 .fvmrc、.fvm/fvm_config.json、pubspec.yaml 中的精确 Flutter 版本，以及 .metadata 中的 Flutter revision；只有没有项目版本锚点时才选择最新 stable。解析结果还会与 pubspec.lock 的 Dart/Flutter SDK 下限核对，并在存在锁文件时使用 flutter pub get --enforce-lockfile。 Flutter Android 默认使用 Skia 兼容渲染后端，以规避部分设备上的 Impeller/Vulkan 启动黑屏；可以在 flutter.yml 中把 android_renderer 改为 impeller。该设置只修改 CI 临时 checkout 的 AndroidManifest.xml，不回写目标仓库。
 
 Godot CI 优先从 Godot.NET.Sdk 读取引擎版本，否则读取 project.godot；它会复用现有 Android 导出预设，或创建仅用于 CI 工作区的 ARM64 预设。Godot C# Android 导出会根据引擎版本检查 .NET Target Framework；必要时只在 CI 临时 checkout 中调整 .csproj 和 global.json，不会提交回目标仓库。当前映射为 Godot 4.5–4.7 使用 net9.0、Godot 4.8+ 使用 net10.0。
 
