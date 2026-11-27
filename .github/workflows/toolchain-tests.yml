@@ -45,6 +45,7 @@ jobs:
           python3 .github/scripts/android-ci/tests/test-resolve-toolchain.py
           python3 .github/scripts/android-ci/tests/test-resolve-ndk.py
           python3 .github/scripts/flutter-ci/tests/test-resolve-flutter.py
+          python3 .github/scripts/flutter-ci/tests/test-configure-android-renderer.py
           python3 .github/scripts/godot-ci/tests/test-prepare-godot.py
           python3 .github/scripts/project-router/tests/test-detect-project.py
           python3 -m compileall -q .github/scripts
