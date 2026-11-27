@@ -47,6 +47,12 @@ on:
         required: false
         default: false
         type: boolean
+      android_renderer:
+        description: "Flutter Android renderer; Skia is the compatibility fallback"
+        required: false
+        default: "skia"
+        type: choice
+        options: ["skia", "impeller"]
 
 permissions:
   contents: read
@@ -133,7 +139,7 @@ jobs:
       build_type: ${{ inputs.build_type }}
       flavor: ${{ inputs.flavor }}
       build_test: ${{ inputs.build_test }}
-      android_renderer: skia
+      android_renderer: ${{ inputs.android_renderer }}
     secrets: inherit
 
   godot:
