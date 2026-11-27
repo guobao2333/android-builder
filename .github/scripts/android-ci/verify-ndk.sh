@@ -22,7 +22,12 @@ resolve_ndk_host_tag() {
 }
 
 DEFAULT_SDK_ROOT="$(resolve_default_sdk_root)"
-SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$DEFAULT_SDK_ROOT}}"
+# nttld/setup-ndk links into ANDROID_HOME/ndk, so use the same SDK root
+# for verification and sdkmanager operations. Fall back to ANDROID_SDK_ROOT
+# only when ANDROID_HOME is not provided.
+SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$DEFAULT_SDK_ROOT}}"
+echo "Android SDK paths: ANDROID_HOME=${ANDROID_HOME:-<unset>} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>} SDK_ROOT=$SDK_ROOT"
+echo "Resolved SDK root: $(readlink -f "$SDK_ROOT" 2>/dev/null || echo "$SDK_ROOT")"
 REQUESTED_NDK_VERSION="${REQUESTED_NDK_VERSION:-}"
 NDK_HOST_TAG="$(resolve_ndk_host_tag)"
 TOOLCHAIN_REL="toolchains/llvm/prebuilt/${NDK_HOST_TAG}/bin/llvm-strip"
@@ -76,6 +81,7 @@ find_complete_requested_ndk() {
 
   for root in \
     "$CANONICAL_NDK_DIR" \
+    "${SETUP_NDK_PATH:-}" \
     "${ANDROID_NDK_HOME:-}" \
     "${ANDROID_NDK_ROOT:-}" \
     "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION" \
@@ -114,14 +120,23 @@ install_requested_ndk() {
   fi
 
   echo "Installing ndk;$REQUESTED_NDK_REVISION with sdkmanager."
+  echo "sdkmanager: $sdkmanager"
+  echo "sdkmanager SDK root: $SDK_ROOT"
   rm -rf "$CANONICAL_NDK_DIR"
 
+  # Capture sdkmanager's exit status explicitly. With errexit enabled, a
+  # failing pipeline can terminate the script before PIPESTATUS is read.
+  set +e
   set +o pipefail
-  yes | "$sdkmanager" --licenses >/dev/null
-  license_status=${PIPESTATUS[1]}
-  yes | "$sdkmanager" --install "ndk;$REQUESTED_NDK_REVISION"
-  install_status=${PIPESTATUS[1]}
+  yes 2>/dev/null | "$sdkmanager" --sdk_root="$SDK_ROOT" --licenses >/dev/null
+  license_pipeline_status=( "${PIPESTATUS[@]}" )
+  license_status="${license_pipeline_status[1]:-1}"
+
+  yes 2>/dev/null | "$sdkmanager" --sdk_root="$SDK_ROOT" --install "ndk;$REQUESTED_NDK_REVISION"
+  install_pipeline_status=( "${PIPESTATUS[@]}" )
+  install_status="${install_pipeline_status[1]:-1}"
   set -o pipefail
+  set -e
 
   if [ "$license_status" -ne 0 ]; then
     echo "::warning::sdkmanager --licenses exited with status $license_status; continuing because licenses may already be accepted."

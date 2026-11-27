@@ -1,0 +1,240 @@
+
+name: Godot CI
+run-name: "${{ inputs.repository || github.repository }} • Godot Android • ${{ inputs.build_type }} • #${{ github.run_number }}"
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: "Target Repository (owner/repo)"
+        required: false
+        default: ""
+      branch:
+        description: "Target branch, tag, or SHA"
+        required: false
+        default: ""
+      submodules:
+        description: "Git submodule checkout mode"
+        required: true
+        default: "recursive"
+        type: choice
+        options: ["false", "true", "recursive"]
+      godot_version:
+        description: "Godot version (auto reads Godot.NET.Sdk/project.godot)"
+        required: true
+        default: "auto"
+      export_preset:
+        description: "Android export preset name; auto reuses one or creates Android CI"
+        required: true
+        default: "auto"
+      package_name:
+        description: "Package identifier used only when an Android preset must be generated"
+        required: false
+        default: "org.godotengine.androidbuilder"
+      build_type:
+        description: "APK build type"
+        required: true
+        default: "debug"
+        type: choice
+        options: ["debug", "release", "all"]
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Resolve Godot project
+    runs-on: ubuntu-latest
+    outputs:
+      repository: ${{ steps.source.outputs.repository }}
+      repository_name: ${{ steps.source.outputs.repository_name }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      godot_version: ${{ steps.project.outputs.godot_version }}
+      use_dotnet: ${{ steps.project.outputs.use_dotnet }}
+      dotnet_version: ${{ steps.project.outputs.dotnet_version }}
+      project_name: ${{ steps.project.outputs.project_name }}
+      export_preset: ${{ steps.project.outputs.export_preset }}
+      matrix: ${{ steps.project.outputs.matrix }}
+    steps:
+      - name: Checkout workflow helpers
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: .ci-workflow
+          persist-credentials: false
+
+      - name: Checkout target repository
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.branch }}
+          path: source
+          token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
+          submodules: ${{ inputs.submodules }}
+
+      - name: Resolve source metadata
+        id: source
+        working-directory: source
+        shell: bash
+        env:
+          TARGET_REPOSITORY: ${{ inputs.repository || github.repository }}
+        run: |
+          set -euo pipefail
+          echo "repository=$TARGET_REPOSITORY" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
+          print("repository_name=" + os.environ["TARGET_REPOSITORY"].rsplit("/", 1)[-1])
+          PY
+          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Godot project and Android preset
+        id: project
+        shell: bash
+        env:
+          GODOT_VERSION: ${{ inputs.godot_version }}
+          EXPORT_PRESET: ${{ inputs.export_preset }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          BUILD_TYPE: ${{ inputs.build_type }}
+        run: |
+          set -euo pipefail
+          python3 .ci-workflow/.github/scripts/godot-ci/prepare-godot.py \
+            --root source \
+            --godot-version "$GODOT_VERSION" \
+            --preset "$EXPORT_PRESET" \
+            --package-name "$PACKAGE_NAME" \
+            --build-type "$BUILD_TYPE"
+
+  build:
+    name: "Godot ${{ matrix.build_type }} • ${{ needs.prepare.outputs.project_name }}"
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout resolved target source
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ needs.prepare.outputs.repository }}
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
+          submodules: ${{ inputs.submodules }}
+
+      - name: Checkout workflow helper scripts
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: .ci-workflow
+          persist-credentials: false
+
+      - name: Recreate Godot Android export preset
+        working-directory: source
+        shell: bash
+        env:
+          GODOT_VERSION: ${{ inputs.godot_version }}
+          EXPORT_PRESET: ${{ inputs.export_preset }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          BUILD_TYPE: ${{ inputs.build_type }}
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/.ci-workflow/.github/scripts/godot-ci/prepare-godot.py" \
+            --root . \
+            --godot-version "$GODOT_VERSION" \
+            --preset "$EXPORT_PRESET" \
+            --package-name "$PACKAGE_NAME" \
+            --build-type "$BUILD_TYPE"
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup .NET SDK
+        if: ${{ needs.prepare.outputs.use_dotnet == 'true' }}
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ needs.prepare.outputs.dotnet_version }}
+
+      - name: Setup Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ needs.prepare.outputs.godot_version }}
+          use-dotnet: ${{ needs.prepare.outputs.use_dotnet }}
+          include-templates: true
+
+      - name: Configure Godot Android SDK paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          sdk = os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME")
+          java = os.environ.get("JAVA_HOME")
+          if not sdk or not Path(sdk, "platform-tools", "adb").is_file():
+              raise SystemExit("Android SDK was not found in ANDROID_SDK_ROOT/ANDROID_HOME.")
+          if not java or not Path(java, "bin", "java").is_file():
+              raise SystemExit("JAVA_HOME does not point to a valid JDK.")
+          settings = Path.home() / ".config" / "godot" / "editor_settings-4.tres"
+          settings.parent.mkdir(parents=True, exist_ok=True)
+          settings.write_text(
+              chr(10).join([
+                  '[gd_resource type="EditorSettings" format=3]',
+                  '',
+                  '[resource]',
+                  "export/android/android_sdk_path = " + json.dumps(sdk),
+                  "export/android/java_sdk_path = " + json.dumps(java),
+                  '',
+              ]),
+              encoding="utf-8",
+          )
+          print(f"Godot Android SDK: {sdk}")
+          print(f"Godot Java SDK: {java}")
+          PY
+
+      - name: Build Godot C# solution
+        if: ${{ needs.prepare.outputs.use_dotnet == 'true' }}
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot --headless --editor --path . --build-solutions --quit
+          shopt -s nullglob
+          projects=(./*.csproj)
+          if [ "${#projects[@]}" -eq 0 ]; then
+            echo "::error::C# project was detected but no root .csproj file was found."
+            exit 1
+          fi
+          for project in "${projects[@]}"; do
+            dotnet build "$project" --configuration Release
+          done
+
+      - name: Import Godot project
+        if: ${{ needs.prepare.outputs.use_dotnet != 'true' }}
+        working-directory: source
+        shell: bash
+        run: godot --headless --editor --path . --import --quit
+
+      - name: Export Android APK
+        working-directory: source
+        shell: bash
+        env:
+          EXPORT_FLAG: ${{ matrix.export_flag }}
+          EXPORT_PRESET: ${{ needs.prepare.outputs.export_preset }}
+          OUTPUT_FILE: ${{ matrix.artifact }}
+        run: |
+          set -euo pipefail
+          mkdir -p build/android
+          godot --headless --path . "$EXPORT_FLAG" "$EXPORT_PRESET" "build/android/$OUTPUT_FILE"
+          test -s "build/android/$OUTPUT_FILE"
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ needs.prepare.outputs.repository_name }}-godot-${{ matrix.build_type }}-${{ github.run_number }}
+          path: source/build/android/${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14

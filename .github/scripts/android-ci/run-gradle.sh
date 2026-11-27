@@ -7,6 +7,7 @@ BUILD_OPTIONS_JSON="${BUILD_OPTIONS_JSON:-[]}"
 SIGNING_UNSIGNED_SCOPE="${SIGNING_UNSIGNED_SCOPE:-none}"
 CI_BUILD_TYPE="${CI_BUILD_TYPE:-}"
 CI_ARTIFACT_TYPE="${CI_ARTIFACT_TYPE:-}"
+GRADLE_COMMAND="$(bash "$CI_HELPERS_DIR/resolve-gradle-command.sh")"
 
 if [ -z "$GRADLE_TASK" ]; then
   echo "::error::GRADLE_TASK is required."
@@ -134,12 +135,11 @@ run_gradle_once() {
   fi
 
   set +e
-  ./gradlew "$GRADLE_TASK" --no-daemon --stacktrace "${args[@]}" 2>&1 | tee "$log_file"
+  "$GRADLE_COMMAND" "$GRADLE_TASK" --no-daemon --stacktrace "${args[@]}" 2>&1 | tee "$log_file"
   local status=${PIPESTATUS[0]}
   return "$status"
 }
 
-chmod +x ./gradlew
 EXTRA_GRADLE_ARGS=()
 while IFS= read -r arg; do
   EXTRA_GRADLE_ARGS+=("$arg")
