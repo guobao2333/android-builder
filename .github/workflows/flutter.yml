@@ -84,12 +84,7 @@ jobs:
           REQUESTED_BRANCH: ${{ inputs.branch }}
         run: |
           set -euo pipefail
-          echo "repository=$TARGET_REPOSITORY" >> "$GITHUB_OUTPUT"
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import os
-          print("repository_name=" + os.environ["TARGET_REPOSITORY"].rsplit("/", 1)[-1])
-          PY
-          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          source_sha="$(git rev-parse HEAD)"
           current_branch="$(git branch --show-current || true)"
           if [ -n "$current_branch" ]; then
             source_ref="$current_branch"
@@ -98,7 +93,12 @@ jobs:
           else
             source_ref="default"
           fi
-          echo "source_ref=$source_ref" >> "$GITHUB_OUTPUT"
+          {
+            printf 'repository=%s\n' "$TARGET_REPOSITORY"
+            printf 'repository_name=%s\n' "${TARGET_REPOSITORY##*/}"
+            printf 'source_sha=%s\n' "$source_sha"
+            printf 'source_ref=%s\n' "$source_ref"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Prepare build matrix
         id: matrix
