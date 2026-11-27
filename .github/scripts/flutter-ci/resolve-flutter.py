@@ -251,7 +251,7 @@ def resolve_flutter(
         else:
             manifest = load_manifest(manifest_file, manifest_url)
             release = release_for(manifest, channel="stable")
-            source = "latest stable (no project pin found"
+            source = "latest stable (no project pin found)"
 
         check_constraints(release, constraints)
 
