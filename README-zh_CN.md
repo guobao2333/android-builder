@@ -18,7 +18,7 @@ Gradle workflow 面向原生 Android/Gradle 工程。Flutter 和 Godot 使用各
 
 Flutter CI 默认使用最新 stable channel。Godot CI 优先从 Godot.NET.Sdk 读取引擎版本，否则读取 project.godot；它会复用现有 Android 导出预设，或创建仅用于 CI 工作区的 ARM64 预设，不会提交回目标仓库。
 
-Godot Release 签名可在运行 workflow 的仓库中配置以下 Secrets：GODOT_ANDROID_KEYSTORE_RELEASE_PATH、GODOT_ANDROID_KEYSTORE_RELEASE_USER 和 GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD。
+自动生成的 Android 预设仅包含最小化的 ARM64 配置。Release 导出需要项目已有的 Android 导出预设，并预先配置有效的 release keystore；当前 workflow 不会把签名凭据注入项目。建议将 keystore 文件和凭据保存在源码仓库之外。
 
 ## 工作流运行原理概览
 

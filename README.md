@@ -18,7 +18,7 @@ The Gradle workflow is intended for native Android/Gradle projects. Flutter and 
 
 Flutter CI defaults to the latest stable Flutter channel. Godot CI reads the engine version from Godot.NET.Sdk when available, otherwise from project.godot; it reuses an existing Android export preset or creates a temporary CI preset with ARM64 enabled. A generated preset is written only into the checked-out workspace and is not committed to the target repository.
 
-For Godot release signing, configure GODOT_ANDROID_KEYSTORE_RELEASE_PATH, GODOT_ANDROID_KEYSTORE_RELEASE_USER, and GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD as secrets in the workflow repository.
+The generated Android preset is intentionally minimal and ARM64-only. Release exports need a project Android export preset with a valid release keystore configured; the workflow does not inject signing credentials into the project. Prefer keeping keystore files and credentials outside the source repository.
 
 ## What this workflow does
 

@@ -225,9 +225,6 @@ jobs:
           EXPORT_FLAG: ${{ matrix.export_flag }}
           EXPORT_PRESET: ${{ needs.prepare.outputs.export_preset }}
           OUTPUT_FILE: ${{ matrix.artifact }}
-          GODOT_ANDROID_KEYSTORE_RELEASE_PATH: ${{ secrets.GODOT_ANDROID_KEYSTORE_RELEASE_PATH }}
-          GODOT_ANDROID_KEYSTORE_RELEASE_USER: ${{ secrets.GODOT_ANDROID_KEYSTORE_RELEASE_USER }}
-          GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD: ${{ secrets.GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD }}
         run: |
           set -euo pipefail
           mkdir -p build/android
