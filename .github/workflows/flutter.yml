@@ -225,15 +225,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f .env ]; then
-            if [ -f .env.example ]; then
-              cp .env.example .env
-              echo "Created .env from .env.example for CI."
-            else
-              : > .env
-              echo "::warning::.env and .env.example are missing; created an empty .env asset. Add required runtime configuration separately."
-            fi
-          fi
+          python3 "$GITHUB_WORKSPACE/.ci-workflow/.github/scripts/flutter-ci/prepare-env.py" --root .
           flutter --version
           if [ -f pubspec.lock ]; then
             flutter pub get --enforce-lockfile
