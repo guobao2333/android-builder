@@ -14,8 +14,11 @@ on:
   pull_request:
     paths:
       - '.github/scripts/android-ci/**'
+      - '.github/scripts/godot-ci/**'
       - '.github/workflows/toolchain-tests.yml'
       - '.github/workflows/android.yml'
+      - '.github/workflows/flutter.yml'
+      - '.github/workflows/godot.yml'
   workflow_dispatch:
 
 permissions:
