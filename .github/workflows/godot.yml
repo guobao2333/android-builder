@@ -117,6 +117,7 @@ jobs:
         with:
           repository: ${{ needs.prepare.outputs.repository }}
           ref: ${{ needs.prepare.outputs.source_sha }}
+          path: source
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
           submodules: ${{ inputs.submodules }}
 
