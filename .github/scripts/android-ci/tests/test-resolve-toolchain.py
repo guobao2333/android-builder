@@ -107,6 +107,31 @@ class ResolveToolchainTest(unittest.TestCase):
         self.assertEqual(values["gradle_install_mode"], "legacy")
         self.assertEqual(values["use_wrapper"], "false")
 
+    def test_agp_9_5_requires_gradle_9_6(self) -> None:
+        values = self.run_resolver({
+            "build.gradle.kts": """
+                plugins {
+                    id("com.android.application") version "9.5.0" apply false
+                }
+            """,
+        })
+        self.assertEqual(values["agp_version"], "9.5.0")
+        self.assertEqual(values["resolved_gradle_version"], "9.6.0")
+        self.assertEqual(values["resolved_jdk_version"], "17")
+
+    def test_agp_9_6_requires_gradle_9_8_2(self) -> None:
+        values = self.run_resolver({
+            "build.gradle.kts": """
+                plugins {
+                    id("com.android.application") version "9.6.0" apply false
+                }
+            """,
+        })
+        self.assertEqual(values["agp_version"], "9.6.0")
+        self.assertEqual(values["resolved_gradle_version"], "9.8.2")
+        self.assertEqual(values["resolved_jdk_version"], "17")
+        self.assertEqual(values["gradle_install_mode"], "setup-gradle")
+
     def test_version_catalog_agp_is_detected(self) -> None:
         values = self.run_resolver({
             "settings.gradle.kts": "plugins { alias(libs.plugins.android.application) apply false }",
