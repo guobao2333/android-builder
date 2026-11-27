@@ -82,12 +82,11 @@ jobs:
           TARGET_REPOSITORY: ${{ inputs.repository || github.repository }}
         run: |
           set -euo pipefail
-          echo "repository=$TARGET_REPOSITORY" >> "$GITHUB_OUTPUT"
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import os
-          print("repository_name=" + os.environ["TARGET_REPOSITORY"].rsplit("/", 1)[-1])
-          PY
-          echo "source_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          {
+            printf 'repository=%s\n' "$TARGET_REPOSITORY"
+            printf 'repository_name=%s\n' "${TARGET_REPOSITORY##*/}"
+            printf 'source_sha=%s\n' "$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Prepare Godot project and Android preset
         id: project
