@@ -337,6 +337,44 @@ screen/immersive_mode=true
     return "Android CI"
 
 
+def ensure_android_texture_import(root: Path) -> bool:
+    """Enable ETC2/ASTC texture import required by Godot Android export."""
+
+    path = root / "project.godot"
+    content = read_text(path)
+    if not content:
+        raise ValueError("project.godot is missing or unreadable.")
+
+    section = re.compile(r"(?ms)^\\[rendering\\][ \\t]*\\r?\\n(.*?)(?=^\\[[^\\r\\n]+\\][ \\t]*$|\\Z)")
+    key = "textures/vram_compression/import_etc2_astc"
+    match = section.search(content)
+
+    if match:
+        body = match.group(1)
+        setting = re.compile(
+            rf"(?m)^([ \\t]*){re.escape(key)}[ \\t]*=[ \\t]*(true|false)[ \\t]*(?:#.*)?$"
+        )
+        found = setting.search(body)
+        if found and found.group(2) == "true":
+            return False
+        if found:
+            updated_body = setting.sub(
+                lambda item: item.group(1) + key + "=true",
+                body,
+                count=1,
+            )
+        else:
+            separator = "" if not body or body.endswith("\\n") else "\\n"
+            updated_body = body + separator + key + "=true\\n"
+        updated = content[:match.start(1)] + updated_body + content[match.end(1):]
+    else:
+        addition = "\\n[rendering]\\n" + key + "=true\\n"
+        updated = content.rstrip() + addition
+
+    path.write_text(updated, encoding="utf-8")
+    return True
+
+
 def write_outputs(values: dict[str, str]) -> None:
     lines = [f"{key}={value.replace(chr(10), ' ').replace(chr(13), ' ')}" for key, value in values.items()]
     output = os.environ.get("GITHUB_OUTPUT", "")
@@ -367,6 +405,7 @@ def main() -> int:
             root, godot_version, is_csharp
         )
         preset_name = ensure_android_preset(root, args.preset, args.package_name)
+        rendering_setting_changed = ensure_android_texture_import(root)
     except ValueError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
@@ -390,6 +429,7 @@ def main() -> int:
         "dotnet_upgrade": dotnet_upgrade,
         "project_name": project_name,
         "export_preset": preset_name,
+        "android_texture_import": "enabled (temporary CI workspace)" if rendering_setting_changed else "already enabled",
         "matrix": json.dumps(matrix, ensure_ascii=False),
     })
     print(f"Prepared Godot Android preset '{preset_name}' for {project_name} ({godot_version}).")
