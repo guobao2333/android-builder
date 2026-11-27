@@ -120,6 +120,31 @@ jobs:
           token: ${{ secrets.CHECKOUT_TOKEN || github.token }}
           submodules: ${{ inputs.submodules }}
 
+      - name: Checkout workflow helper scripts
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: .ci-workflow
+          persist-credentials: false
+
+      - name: Recreate Godot Android export preset
+        working-directory: source
+        shell: bash
+        env:
+          GODOT_VERSION: ${{ inputs.godot_version }}
+          EXPORT_PRESET: ${{ inputs.export_preset }}
+          PACKAGE_NAME: ${{ inputs.package_name }}
+          BUILD_TYPE: ${{ inputs.build_type }}
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/.ci-workflow/.github/scripts/godot-ci/prepare-godot.py" \
+            --root . \
+            --godot-version "$GODOT_VERSION" \
+            --preset "$EXPORT_PRESET" \
+            --package-name "$PACKAGE_NAME" \
+            --build-type "$BUILD_TYPE"
+
       - name: Setup JDK 17
         uses: actions/setup-java@v5
         with:
@@ -156,9 +181,14 @@ jobs:
           settings = Path.home() / ".config" / "godot" / "editor_settings-4.tres"
           settings.parent.mkdir(parents=True, exist_ok=True)
           settings.write_text(
-              '[gd_resource type="EditorSettings" format=3]\\n\\n[resource]\\n'
-              + "export/android/android_sdk_path = " + json.dumps(sdk) + "\\n"
-              + "export/android/java_sdk_path = " + json.dumps(java) + "\\n",
+              chr(10).join([
+                  '[gd_resource type="EditorSettings" format=3]',
+                  '',
+                  '[resource]',
+                  "export/android/android_sdk_path = " + json.dumps(sdk),
+                  "export/android/java_sdk_path = " + json.dumps(java),
+                  '',
+              ]),
               encoding="utf-8",
           )
           print(f"Godot Android SDK: {sdk}")
