@@ -154,9 +154,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ ! -f .env ] && [ -f .env.example ]; then
-            cp .env.example .env
-            echo "Created .env from .env.example for CI."
+          if [ ! -f .env ]; then
+            if [ -f .env.example ]; then
+              cp .env.example .env
+              echo "Created .env from .env.example for CI."
+            else
+              : > .env
+              echo "::warning::.env and .env.example are missing; created an empty .env asset. Add required runtime configuration separately."
+            fi
           fi
           flutter --version
           flutter pub get
