@@ -51,6 +51,8 @@ jobs:
       godot_version: ${{ steps.project.outputs.godot_version }}
       use_dotnet: ${{ steps.project.outputs.use_dotnet }}
       dotnet_version: ${{ steps.project.outputs.dotnet_version }}
+      dotnet_target_framework: ${{ steps.project.outputs.dotnet_target_framework }}
+      dotnet_upgrade: ${{ steps.project.outputs.dotnet_upgrade }}
       project_name: ${{ steps.project.outputs.project_name }}
       export_preset: ${{ steps.project.outputs.export_preset }}
       matrix: ${{ steps.project.outputs.matrix }}
@@ -203,10 +205,13 @@ jobs:
         run: |
           set -euo pipefail
           godot --headless --editor --path . --build-solutions --quit
-          shopt -s nullglob
-          projects=(./*.csproj)
+          mapfile -d '' projects < <(
+            find . \
+              -type d \( -name .git -o -name .godot -o -name .ci-workflow -o -name bin -o -name obj -o -name build \) -prune \
+              -o -type f -name '*.csproj' -print0
+          )
           if [ "${#projects[@]}" -eq 0 ]; then
-            echo "::error::C# project was detected but no root .csproj file was found."
+            echo "::error::C# project was detected but no .csproj file was found."
             exit 1
           fi
           for project in "${projects[@]}"; do
