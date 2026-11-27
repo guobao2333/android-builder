@@ -345,14 +345,14 @@ def ensure_android_texture_import(root: Path) -> bool:
     if not content:
         raise ValueError("project.godot is missing or unreadable.")
 
-    section = re.compile(r"(?ms)^\\[rendering\\][ \\t]*\\r?\\n(.*?)(?=^\\[[^\\r\\n]+\\][ \\t]*$|\\Z)")
+    section = re.compile(r"(?ms)^\[rendering\][ \t]*\r?\n(.*?)(?=^\[[^\r\n]+\][ \t]*$|\Z)")
     key = "textures/vram_compression/import_etc2_astc"
     match = section.search(content)
 
     if match:
         body = match.group(1)
         setting = re.compile(
-            rf"(?m)^([ \\t]*){re.escape(key)}[ \\t]*=[ \\t]*(true|false)[ \\t]*(?:#.*)?$"
+            rf"(?m)^([ \t]*){re.escape(key)}[ \t]*=[ \t]*(true|false)[ \t]*(?:#.*)?$"
         )
         found = setting.search(body)
         if found and found.group(2) == "true":
@@ -364,16 +364,15 @@ def ensure_android_texture_import(root: Path) -> bool:
                 count=1,
             )
         else:
-            separator = "" if not body or body.endswith("\\n") else "\\n"
-            updated_body = body + separator + key + "=true\\n"
+            separator = "" if not body or body.endswith("\n") else "\n"
+            updated_body = body + separator + key + "=true\n"
         updated = content[:match.start(1)] + updated_body + content[match.end(1):]
     else:
-        addition = "\\n[rendering]\\n" + key + "=true\\n"
+        addition = "\n[rendering]\n" + key + "=true\n"
         updated = content.rstrip() + addition
 
     path.write_text(updated, encoding="utf-8")
     return True
-
 
 def write_outputs(values: dict[str, str]) -> None:
     lines = [f"{key}={value.replace(chr(10), ' ').replace(chr(13), ' ')}" for key, value in values.items()]
