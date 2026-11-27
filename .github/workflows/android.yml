@@ -330,19 +330,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Checked out source: ref=$SOURCE_REF sha=$SOURCE_SHA"
 
-      - name: Verify target project type
+      - name: Detect and validate native Android project
         shell: bash
         working-directory: source
         run: |
           set -euo pipefail
-          if [ -f pubspec.yaml ] && grep -Eq '^flutter:' pubspec.yaml; then
-            echo '::error::A Flutter project was detected. Run the Flutter CI workflow instead.'
-            exit 1
-          fi
-          if [ -f project.godot ]; then
-            echo '::error::A Godot project was detected. Run the Godot CI workflow instead.'
-            exit 1
-          fi
+          python3 "$GITHUB_WORKSPACE/.android-ci-workflow/.github/scripts/project-router/detect-project.py" \
+            --root . \
+            --requested android
 
       - name: Test toolchain version resolver
         shell: bash
