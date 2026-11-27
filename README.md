@@ -6,17 +6,22 @@ This repository contains a manually triggered GitHub Actions workflow for buildi
 
 ---
 
-## Other Android project engines
+## Project detection and automatic routing
 
-The Gradle workflow is intended for native Android/Gradle projects. Flutter and Godot use dedicated workflows:
+When using the builder for the first time or when the target repository's Android project type is unknown, start with **auto.yml (Auto Android Build)**. It inspects the target repository and routes the exact checked-out source SHA to a supported build adapter:
 
 | Workflow | Project type | Output |
 |---|---|---|
-| android.yml | Native Android projects using Gradle/AGP | APK / AAB |
-| flutter.yml | Flutter projects with an Android platform directory | APK / AAB |
-| godot.yml | Godot 4.x projects (GDScript and .NET/C#) | Android APK |
+| auto.yml | Automatically detects and routes supported projects | Depends on project type |
+| android.yml | Root Android Gradle Application project | APK / AAB |
+| flutter.yml | Root Flutter project with an Android platform directory | APK / AAB |
+| godot.yml | Root Godot 4.x project (GDScript and .NET/C#) | Android APK |
 
-Flutter CI defaults to the latest stable Flutter channel. Godot CI reads the engine version from Godot.NET.Sdk when available, otherwise from project.godot; it reuses an existing Android export preset or creates a temporary CI preset with ARM64 enabled. A generated preset is written only into the checked-out workspace and is not committed to the target repository.
+Automatic detection is not speculative source-to-source conversion for arbitrary repositories. The detector recognizes Flutter, Godot, and native Android projects, and avoids routing React Native, Capacitor, Cordova, Unity, .NET MAUI, Android-library-only, or unknown Gradle projects into the plain native Gradle workflow. Types without an adapter fail with the detected evidence and reason. Supporting them requires a framework-specific toolchain plus build/export steps; changing the Gradle command alone is not sufficient.
+
+The three dedicated workflows can also be run directly. Flutter SDK resolution respects an exact version from .fvmrc, .fvm/fvm_config.json, pubspec.yaml, or the Flutter revision in .metadata first; it selects the latest stable release only when no project pin exists. The selected SDK is checked against the Dart/Flutter lower bounds in pubspec.lock, and flutter pub get --enforce-lockfile is used when a lockfile is present.
+
+Godot CI reads the engine version from Godot.NET.Sdk when available, otherwise from project.godot; it reuses an existing Android export preset or creates a temporary CI preset with ARM64 enabled. For Godot C# Android exports, the workflow checks the .NET Target Framework against the engine version and, when needed, adjusts .csproj and global.json only in the temporary CI checkout. It does not commit these changes to the target repository. The current mapping uses net9.0 for Godot 4.5–4.7 and net10.0 for Godot 4.8+.
 
 The generated Android preset is intentionally minimal and ARM64-only. Release exports need a project Android export preset with a valid release keystore configured; the workflow does not inject signing credentials into the project. Prefer keeping keystore files and credentials outside the source repository.
 
@@ -46,7 +51,12 @@ The workflow defined in `android.yml`:
 Place the workflow and helper scripts at:
 
 ```text
+.github/workflows/auto.yml
 .github/workflows/android.yml
+.github/workflows/flutter.yml
+.github/workflows/godot.yml
+.github/workflows/toolchain-tests.yml
+.github/scripts/project-router/detect-project.py
 .github/actions/android-ci-prepare/action.yml
 .github/scripts/android-ci/ndk_versions.py
 .github/scripts/android-ci/verify-ndk.sh
