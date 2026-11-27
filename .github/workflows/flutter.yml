@@ -142,11 +142,30 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Resolve Flutter channel and version
+        id: flutter
+        shell: bash
+        env:
+          REQUESTED_FLUTTER_VERSION: ${{ inputs.flutter_version }}
+        run: |
+          set -euo pipefail
+          requested="${REQUESTED_FLUTTER_VERSION:-stable}"
+          case "$requested" in
+            stable|beta|main|master)
+              echo "channel=$requested" >> "$GITHUB_OUTPUT"
+              echo "version=" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "channel=stable" >> "$GITHUB_OUTPUT"
+              echo "version=$requested" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ inputs.flutter_version }}
-          channel: stable
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          channel: ${{ steps.flutter.outputs.channel }}
           cache: true
           pub-cache: true
 
