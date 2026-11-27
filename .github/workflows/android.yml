@@ -256,9 +256,11 @@ jobs:
             SOURCE_REF="detached"
           fi
 
-          echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
-          echo "source_sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
-          echo "source_short_sha=$SOURCE_SHORT_SHA" >> "$GITHUB_OUTPUT"
+          {
+            printf 'source_ref=%s\n' "$SOURCE_REF"
+            printf 'source_sha=%s\n' "$SOURCE_SHA"
+            printf 'source_short_sha=%s\n' "$SOURCE_SHORT_SHA"
+          } >> "$GITHUB_OUTPUT"
           echo "Checked out source: ref=$SOURCE_REF sha=$SOURCE_SHA"
 
       - name: Verify target project type
