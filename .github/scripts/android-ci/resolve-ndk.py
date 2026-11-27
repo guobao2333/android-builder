@@ -118,6 +118,10 @@ def detect_ndk_versions(root: Path) -> tuple[list[str], list[str]]:
             value = resolve_expression(expression, variables)
             if value:
                 declarations.append(value)
+            elif expression.strip() == "flutter.ndkVersion" and (root / "pubspec.yaml").is_file():
+                # Flutter's Gradle plugin resolves this from the installed Flutter SDK.
+                # It is not a literal NDK declaration that this static parser can inspect.
+                continue
             else:
                 unresolved.append(f"{path.relative_to(root)}: {expression}")
     return sorted(set(declarations)), unresolved

@@ -6,8 +6,11 @@ on:
       - main
     paths:
       - '.github/scripts/android-ci/**'
+      - '.github/scripts/godot-ci/**'
       - '.github/workflows/toolchain-tests.yml'
       - '.github/workflows/android.yml'
+      - '.github/workflows/flutter.yml'
+      - '.github/workflows/godot.yml'
   pull_request:
     paths:
       - '.github/scripts/android-ci/**'
@@ -32,3 +35,4 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/android-ci/tests/test-resolve-toolchain.py
           python3 .github/scripts/android-ci/tests/test-resolve-ndk.py
+          python3 .github/scripts/godot-ci/tests/test-prepare-godot.py

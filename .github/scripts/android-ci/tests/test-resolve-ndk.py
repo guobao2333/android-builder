@@ -73,6 +73,17 @@ class ResolveNdkTests(unittest.TestCase):
             self.assertFalse(versions)
             self.assertTrue(unresolved)
 
+    def test_flutter_managed_ndk_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.write(root, "pubspec.yaml", "name: sample\ndependencies:\n  flutter:\n    sdk: flutter\n")
+            self.write(
+                root,
+                "android/app/build.gradle.kts",
+                "android { ndkVersion = flutter.ndkVersion }",
+            )
+            self.assertEqual(MODULE.detect_ndk_versions(root), ([], []))
+
     def test_no_declaration(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

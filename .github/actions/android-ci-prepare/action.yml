@@ -53,10 +53,11 @@ runs:
         echo "Runner OS: ${RUNNER_OS:-unknown}"
         echo "Runner architecture: ${RUNNER_ARCH:-unknown}"
 
-    - name: Setup JDK
+    # sdkmanager requires JDK 17+, even when the target project needs a legacy JDK.
+    - name: Setup JDK for Android SDK tools
       uses: actions/setup-java@v5
       with:
-        java-version: ${{ inputs.jdk_version }}
+        java-version: '17'
         distribution: temurin
 
     - name: Setup Gradle Wrapper
@@ -127,6 +128,12 @@ runs:
         set -euo pipefail
         bash "$CI_HELPERS_DIR/verify-ndk.sh"
 
+    - name: Setup JDK for project build
+      uses: actions/setup-java@v5
+      with:
+        java-version: ${{ inputs.jdk_version }}
+        distribution: temurin
+
     - name: Resolve pre-build command
       if: ${{ inputs.run_prebuild == 'true' }}
       id: prebuild
@@ -140,9 +147,10 @@ runs:
 
     - name: Setup Go
       if: ${{ inputs.run_prebuild == 'true' && steps.prebuild.outputs.uses_go == 'true' }}
-      uses: actions/setup-go@v6
+      uses: actions/setup-go@v7
       with:
         go-version: ${{ inputs.go_version }}
+        check-latest: true
         cache: false
 
     - name: Compute pre-build cache key
