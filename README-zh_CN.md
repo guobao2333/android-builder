@@ -423,7 +423,7 @@ gh workflow run android.yml \
 - 勾选 `signing=true` 但签名变量/仓库配置不完整；workflow 会对 release/AAB/聚合任务自动回退到 `-Punsigned`，但目标项目本身也需要支持该 unsigned 属性。
 - 自定义 `pre_build_command` 执行失败。
 - auto 前置构建模式执行后未生成 `app/libs/libcore.aar`。
-- 请求的 NDK 版本无法安装，找不到完整缓存，宿主系统对应的 NDK 工具链缺失，或修复后仍不完整。
+- 请求的 NDK 版本无法安装、SDK Manager 中不存在对应版本/通道、宿主系统对应的 NDK 工具链缺失，或校验后仍不完整。
 
 ## 开源许可
 
