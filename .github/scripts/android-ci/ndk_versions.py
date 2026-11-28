@@ -8,6 +8,12 @@ import sys
 from collections import OrderedDict
 from typing import Sequence
 
+# Gradle may declare the NDK base revision while SDK Manager publishes a
+# preview package with a channel suffix in its package id and Pkg.Revision.
+NDK_PACKAGE_VERSIONS = {
+    "29.0.13113456": "29.0.13113456-beta1",
+}
+
 NDK_REVISIONS = OrderedDict(
     (
         ("r29", "29.0.14033849"),
@@ -35,9 +41,17 @@ def resolve_ndk_revision(value: str) -> str:
     raise ValueError(f"Unable to map NDK version '{value}' to a full SDK revision. Known aliases: {aliases}")
 
 
+def resolve_ndk_package_version(value: str) -> str:
+    """Resolve the SDK Manager package version for a Gradle NDK revision."""
+    revision = resolve_ndk_revision(value)
+    return NDK_PACKAGE_VERSIONS.get(revision, revision)
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--resolve", metavar="VERSION", help="Print the full SDK NDK revision for an alias or revision.")
+    version_group = parser.add_mutually_exclusive_group()
+    version_group.add_argument("--resolve", metavar="VERSION", help="Print the NDK base revision for an alias or revision.")
+    version_group.add_argument("--package-version", metavar="VERSION", help="Print the SDK Manager package version for an alias or revision.")
     parser.add_argument("--aliases", action="store_true", help="Print supported aliases as a comma-separated list.")
     parser.add_argument("--choices-json", action="store_true", help="Print supported workflow choices as a JSON-style list.")
     return parser.parse_args(argv)
@@ -52,13 +66,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"::error::{exc}", file=sys.stderr)
             return 1
         return 0
+    if ns.package_version:
+        try:
+            print(resolve_ndk_package_version(ns.package_version))
+        except ValueError as exc:
+            print(f"::error::{exc}", file=sys.stderr)
+            return 1
+        return 0
     if ns.aliases:
         print(",".join(NDK_REVISIONS))
         return 0
     if ns.choices_json:
         print("[" + ", ".join(repr(alias) for alias in NDK_REVISIONS) + "]")
         return 0
-    print("::error::No action specified. Use --resolve, --aliases, or --choices-json.", file=sys.stderr)
+    print("::error::No action specified. Use --resolve, --package-version, --aliases, or --choices-json.", file=sys.stderr)
     return 2
 
 
