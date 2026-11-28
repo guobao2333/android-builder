@@ -93,7 +93,7 @@ workflow 会把运行 workflow 的仓库按 `github.sha` checkout 到单独的 h
 | **repository** | 目标仓库，格式为 `owner/repo`。留空则使用运行此 workflow 的仓库。 | `string` | 空 |
 | **branch** | 目标分支、tag 或 SHA。留空则使用目标仓库默认分支。 | `string` | 空 |
 | **submodules** | Git submodule 拉取模式：`false` 禁用，`true` 仅拉取直接 submodule，`recursive` 递归拉取嵌套 submodule。 | choice: `false`, `true`, `recursive` | `recursive` |
-| **module** | 目标模块，支持逗号分隔。可写 `app` 或 `:app`。为空时自动探测可安装的 Android Application 模块。 | `string` | `app` |
+| **module** | 目标模块：`auto` 自动探测唯一的主 Application 模块，`all` 构建所有识别到的 Application 模块，也可写 `manager`、`:manager` 或逗号分隔的显式列表。 | `string` | `auto` |
 | **build_flavor** | build flavor 过滤器，支持逗号分隔。留空表示接受所有 flavor。匹配逻辑会规范化后做子串匹配。 | `string` | 空 |
 | **build_type** | 构建产物选择器。 | choice: `debug`, `release`, `aab`, `all` | `debug` |
 | **build_options** | 附加到 `gradle build` 和具体构建任务后的额外 Gradle 参数。支持 shell 风格引号或字符串组成的 JSON 数组。 | `string` | 空 |
@@ -148,7 +148,7 @@ workflow 会在执行 Gradle 前自动解析 Android 工具链：
 
 ## Workflow 流程图与摘要
 
-Actions 可视化流程图的 job 名称也会携带必要上下文：setup 节点显示目标仓库和模块过滤条件；Test/Build 节点显示实际解析出的 AGP、Gradle 与 JDK 版本；Build 节点还显示模块和具体任务。GitHub Job Summary 另外生成 Mermaid 流程图，展示 AGP、Gradle、JDK、模块/variant 数量、构建任务和产物类型，完整输入及 matrix 表格仍保留在下方。
+Actions 可视化流程图的 job 名称也会携带必要上下文：setup 节点显示目标仓库和模块过滤条件；Test/Build 节点显示实际解析出的 AGP、Gradle 与 JDK 版本；Build 节点还显示模块和具体任务。GitHub Job Summary 会在解析输入与构建 matrix 前先写入 `Android module detection`，展示请求模式、全部 Gradle subprojects、Application 候选、最终选择、判断依据及相关 tasks；即使模块探测失败，这部分诊断也会保留。随后再生成 Mermaid 工具链流程图、完整输入和 matrix 表格。
 
 ## build_type 行为
 
@@ -170,9 +170,10 @@ Actions 可视化流程图的 job 名称也会携带必要上下文：setup 节�
 ### 模块
 
 - 模块名会规范化为 Gradle path 格式，例如 `app` 会变成 `:app`。
-- 如果填写了 `module`，每个请求的模块都必须存在于 `./gradlew projects` 输出中。
-- 如果 `module` 为空，workflow 会扫描全部 Gradle subprojects，并保留暴露 app 风格 install 或 bundle task 的模块。
-- 如果请求的模块存在，但不是可安装 Android Application 模块，workflow 会快速失败。
+- `module=auto`（默认）会扫描全部 Gradle subprojects，通过 `install*` / 非 AAR 的 `bundle*` task 识别可安装的 Android Application 模块；只有一个候选时就选择它，不要求模块名为 `app`，例如唯一候选为 `:manager` 时会自动选择 `:manager`。
+- 如果自动探测到多个 Application 候选，不会按名称猜测主模块，而是失败并列出全部候选；此时可显式指定模块，或用 `module=all` 构建所有候选。
+- 显式填写模块时（支持逗号分隔和 Gradle path），每个请求的模块都必须存在于 `./gradlew projects` 输出中，并暴露可安装 Application task。
+- 模块探测结果会写入 Job Summary，包括请求模式、全部 subproject、Application 候选、最终选择、判断依据和识别到的相关 tasks；探测失败时也会先写入失败原因和已获得的候选信息。
 
 ### Flavors
 
@@ -296,15 +297,17 @@ summary 包含：
 
 ## 示例
 
-### 1. 构建当前仓库默认模块
+### 1. 自动探测并构建当前仓库的主 Application 模块
 
 ```yaml
 repository: ""
 branch: ""
-module: app
+module: auto
 build_type: debug
 signing: false
 ```
+
+当且仅当探测到一个可安装 Application 模块时，自动选择该模块；即使它命名为 `:manager` 或其他名称也可以。
 
 ### 2. 构建其他仓库的 release AAB
 
