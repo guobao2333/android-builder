@@ -1,0 +1,29 @@
+name: Temporary NDK Target Validation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/ndk-target-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-target:
+    uses: ./.github/workflows/android.yml
+    with:
+      repository: qq2070006042-create/yuehong-privilege-assistant
+      branch: c4c4fedb46506db4cad158a456f36afb2c1745b4
+      resolved_source_ref: main
+      submodules: recursive
+      module: app
+      build_type: debug
+      build_test: false
+      upload_release: false
+      os_version: ubuntu-latest
+      jdk_version: auto
+      ndk_version: auto
+      gradle_version: auto
+    secrets: inherit
