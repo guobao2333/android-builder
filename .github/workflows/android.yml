@@ -707,7 +707,7 @@ jobs:
                       f"Module '{module}' has no build variants matching {filter_desc}. "
                       f"Available tasks: {', '.join(tasks) if tasks else 'none'}"
                   )
-                  if module_input:
+                  if module_selection_mode == "explicit":
                       format_error(message)
                   module_errors.append(message)
                   continue
