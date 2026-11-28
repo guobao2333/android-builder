@@ -92,7 +92,7 @@ Shared helper responsibilities:
 | **repository** | Target repository in `owner/repo` format. Leave empty to use the repository that runs this workflow. | `string` | empty |
 | **branch** | Target branch, tag, or SHA. Leave empty to use the target repository default branch. | `string` | empty |
 | **submodules** | Git submodule checkout mode: `false` disables submodules, `true` checks out direct submodules, and `recursive` includes nested submodules. | choice: `false`, `true`, `recursive` | `recursive` |
-| **module** | Target module(s), comma-separated. Use values such as `app` or `:app`. If empty, the workflow auto-detects installable Android application modules. | `string` | `app` |
+| **module** | Target module: `auto` detects the only primary Application module, `all` builds every detected Application module, or provide a module such as `manager`, `:manager`, or a comma-separated explicit list. | `string` | `auto` |
 | **build_flavor** | Build flavor filter(s), comma-separated. Leave empty to accept all flavors. Matching is normalized and substring-based. | `string` | empty |
 | **build_type** | Build output selector. | choice: `debug`, `release`, `aab`, `all` | `debug` |
 | **build_options** | Extra Gradle arguments appended to `gradle build` and build tasks. Accepts shell-style quoting or a JSON array of strings. | `string` | empty |
@@ -147,7 +147,7 @@ Gradle versions below 6.0 use a legacy distribution/cache path to avoid relying 
 
 ## Workflow graph and summary
 
-The Actions visualization uses informative job names: the setup node identifies the target and module filter, while Test/Build nodes show the resolved AGP, Gradle and JDK versions (Build nodes also show the module and task). The GitHub Job Summary adds a Mermaid graph with AGP, Gradle, JDK, module/variant count, selected tasks, and artifact types. The detailed resolved-input and matrix tables remain below the graph.
+The Actions visualization uses informative job names: the setup node identifies the target and module filter, while Test/Build nodes show the resolved AGP, Gradle and JDK versions (Build nodes also show the module and task). Before the resolved-input table and Mermaid toolchain graph, the GitHub Job Summary writes an `Android module detection` section with the requested mode, all Gradle subprojects, Application candidates, final selection and reason, and relevant tasks. This diagnostic section is retained even when module detection fails.
 
 ## Build type behavior
 
@@ -169,9 +169,10 @@ Notes:
 ### Modules
 
 - Module names are normalized to Gradle path format. For example, `app` becomes `:app`.
-- If `module` is provided, every requested module must exist in `./gradlew projects`.
-- If `module` is empty, the workflow scans all Gradle subprojects and keeps modules that expose app-style install or bundle tasks.
-- If a requested module exists but does not expose installable Android application tasks, the workflow fails fast.
+- `module=auto` (the default) scans every Gradle subproject and recognizes installable Android Application modules through `install*` or non-AAR `bundle*` tasks. If there is exactly one candidate, it is selected regardless of its name (for example, `:manager`).
+- If auto-detection finds multiple Application candidates, the workflow does not guess based on directory names: it fails and lists the candidates. Specify one or more modules explicitly, or use `module=all` to build every candidate.
+- Explicit module lists accept comma-separated names or Gradle paths. Every requested module must exist in `./gradlew projects` and expose installable Application tasks.
+- The Job Summary includes the requested mode, all Gradle subprojects, Application candidates, the final selection and its reason, and relevant tasks. This diagnostic section is written before module-resolution failures too.
 
 ### Flavors
 
@@ -295,15 +296,17 @@ The summary contains:
 
 ## Examples
 
-### 1. Build the default module in the current repository
+### 1. Auto-detect and build the primary Application module
 
 ```yaml
 repository: ""
 branch: ""
-module: app
+module: auto
 build_type: debug
 signing: false
 ```
+
+Auto mode selects the module only when exactly one installable Application candidate is detected, regardless of its module name (for example, `:manager`).
 
 ### 2. Build a release AAB from another repository
 
