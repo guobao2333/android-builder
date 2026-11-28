@@ -15,7 +15,6 @@ on:
       - '.github/workflows/flutter.yml'
       - '.github/workflows/godot.yml'
       - '.github/workflows/auto.yml'
-      - '.github/workflows/ndk-target-validation.yml'
   pull_request:
     paths:
       - '.github/scripts/android-ci/**'
@@ -28,7 +27,6 @@ on:
       - '.github/workflows/flutter.yml'
       - '.github/workflows/godot.yml'
       - '.github/workflows/auto.yml'
-      - '.github/workflows/ndk-target-validation.yml'
   workflow_dispatch:
 
 permissions:
