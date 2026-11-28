@@ -43,10 +43,12 @@ else:
 
 def extract_matrix_script() -> str:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    match = re.search(
-        r"(?ms)^[ \\t]*python3 - <<'PY' >> \"\\$GITHUB_OUTPUT\"\\r?\\n(.*?)^[ \\t]*PY[ \\t]*$",
-        workflow,
+    pattern = (
+        r"(?ms)^[ \t]*python3 - <<'PY' >> "
+        + re.escape('"$GITHUB_OUTPUT"')
+        + r"\r?\n(.*?)^[ \t]*PY[ \t]*$"
     )
+    match = re.search(pattern, workflow)
     if not match:
         raise AssertionError("Could not locate the Android matrix Python heredoc.")
     return textwrap.dedent(match.group(1))
