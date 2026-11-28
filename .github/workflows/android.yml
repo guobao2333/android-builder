@@ -522,7 +522,6 @@ jobs:
               if summary_path:
                   with open(summary_path, "a", encoding="utf-8") as stream:
                       stream.write("\n".join(lines) + "\n")
-              print("\n".join(lines))
 
           def run_gradle(*args: str) -> str:
               gradle_command = os.environ.get("GRADLE_COMMAND", "").strip()
