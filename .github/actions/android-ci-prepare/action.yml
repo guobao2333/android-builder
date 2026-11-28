@@ -4,6 +4,9 @@ inputs:
   helpers_dir:
     description: Absolute path to checked-out Android CI helper scripts.
     required: true
+  project_dir:
+    description: Absolute path to the checked-out Android project.
+    required: true
   runner_label:
     description: Requested runner label for diagnostics.
     required: true
@@ -131,6 +134,18 @@ runs:
       with:
         java-version: ${{ inputs.jdk_version }}
         distribution: temurin
+
+    # Cargo cross-compilation needs Rust's target standard library in addition
+    # to the Android NDK linker/Clang tools installed above.
+    - name: Install required Android Rust targets
+      if: ${{ inputs.run_prebuild == 'true' }}
+      shell: bash
+      env:
+        CI_HELPERS_DIR: ${{ inputs.helpers_dir }}
+        PROJECT_DIR: ${{ inputs.project_dir }}
+      run: |
+        set -euo pipefail
+        python3 "$CI_HELPERS_DIR/setup-rust-targets.py" --root "$PROJECT_DIR"
 
     - name: Resolve pre-build command
       if: ${{ inputs.run_prebuild == 'true' }}
