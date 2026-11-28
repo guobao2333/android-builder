@@ -1,5 +1,5 @@
 name: Auto Android Build
-run-name: "${{ inputs.repository || github.repository }} • Auto Android • ${{ inputs.project_type }} • #${{ github.run_number }}"
+run-name: "${{ inputs.repository || github.repository }} • ${{ inputs.branch || 'default branch' }} • ${{ inputs.build_type }} • #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
@@ -64,6 +64,7 @@ jobs:
     outputs:
       repository: ${{ steps.source.outputs.repository }}
       source_sha: ${{ steps.source.outputs.source_sha }}
+      source_ref: ${{ steps.source.outputs.source_ref }}
       project_type: ${{ steps.detect.outputs.project_type }}
       detected_markers: ${{ steps.detect.outputs.detected_markers }}
       detection_reason: ${{ steps.detect.outputs.detection_reason }}
@@ -90,14 +91,29 @@ jobs:
         shell: bash
         env:
           TARGET_REPOSITORY: ${{ inputs.repository || github.repository }}
+          TARGET_BRANCH: ${{ inputs.branch }}
         run: |
           set -euo pipefail
           source_sha="$(git -C source rev-parse HEAD)"
+          current_branch="$(git -C source branch --show-current || true)"
+          remote_head="$(git -C source symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+
+          if [ -n "$current_branch" ]; then
+            source_ref="$current_branch"
+          elif [ -n "$TARGET_BRANCH" ]; then
+            source_ref="$TARGET_BRANCH"
+          elif [ -n "$remote_head" ]; then
+            source_ref="$remote_head"
+          else
+            source_ref="$source_sha"
+          fi
+
           {
             printf 'repository=%s\n' "$TARGET_REPOSITORY"
+            printf 'source_ref=%s\n' "$source_ref"
             printf 'source_sha=%s\n' "$source_sha"
           } >> "$GITHUB_OUTPUT"
-          echo "Resolved target source: $TARGET_REPOSITORY@$source_sha"
+          echo "Resolved target source: $TARGET_REPOSITORY@$source_ref ($source_sha)"
 
       - name: Detect project type
         id: detect
@@ -111,13 +127,14 @@ jobs:
             --requested "$REQUESTED_PROJECT_TYPE"
 
   android:
-    name: Native Android Gradle build
+    name: "Android • ${{ needs.detect.outputs.source_ref }} • module ${{ inputs.module || 'app' }} • ${{ inputs.build_type }}
     needs: detect
     if: ${{ needs.detect.outputs.project_type == 'android' }}
     uses: ./.github/workflows/android.yml
     with:
       repository: ${{ needs.detect.outputs.repository }}
       branch: ${{ needs.detect.outputs.source_sha }}
+      resolved_source_ref: ${{ needs.detect.outputs.source_ref }}
       submodules: ${{ inputs.submodules }}
       module: ${{ inputs.module }}
       build_flavor: ${{ inputs.build_flavor }}
@@ -127,7 +144,7 @@ jobs:
     secrets: inherit
 
   flutter:
-    name: Flutter Android build
+    name: "Flutter • ${{ needs.detect.outputs.source_ref }} • ${{ inputs.build_type }}
     needs: detect
     if: ${{ needs.detect.outputs.project_type == 'flutter' }}
     uses: ./.github/workflows/flutter.yml
@@ -143,7 +160,7 @@ jobs:
     secrets: inherit
 
   godot:
-    name: Godot Android export
+    name: "Godot • ${{ needs.detect.outputs.source_ref }} • ${{ inputs.build_type }}
     needs: detect
     if: ${{ needs.detect.outputs.project_type == 'godot' }}
     uses: ./.github/workflows/godot.yml
