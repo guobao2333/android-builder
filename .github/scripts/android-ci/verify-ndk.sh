@@ -128,7 +128,7 @@ install_requested_ndk() {
 
   # Channel 3 includes stable, beta, and canary releases. The requested
   # revision is pinned explicitly, so this cannot silently select a newer NDK.
-  yes 2>/dev/null | "$sdkmanager" --sdk_root="$SDK_ROOT" --channel=3 --install "ndk;$REQUESTED_NDK_REVISION"
+  yes 2>/dev/null | "$sdkmanager" --sdk_root="$SDK_ROOT" --install "ndk;$REQUESTED_NDK_REVISION" --channel=3
   install_pipeline_status=( "${PIPESTATUS[@]}" )
   install_status="${install_pipeline_status[1]:-1}"
   set -o pipefail
