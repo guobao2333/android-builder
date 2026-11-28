@@ -22,9 +22,8 @@ resolve_ndk_host_tag() {
 }
 
 DEFAULT_SDK_ROOT="$(resolve_default_sdk_root)"
-# nttld/setup-ndk links into ANDROID_HOME/ndk, so use the same SDK root
-# for verification and sdkmanager operations. Fall back to ANDROID_SDK_ROOT
-# only when ANDROID_HOME is not provided.
+# Use the SDK root initialized by android-actions/setup-android. Fall back to
+# the standard runner SDK location only if the environment is not populated.
 SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$DEFAULT_SDK_ROOT}}"
 echo "Android SDK paths: ANDROID_HOME=${ANDROID_HOME:-<unset>} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>} SDK_ROOT=$SDK_ROOT"
 echo "Resolved SDK root: $(readlink -f "$SDK_ROOT" 2>/dev/null || echo "$SDK_ROOT")"
