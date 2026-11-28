@@ -1,5 +1,5 @@
 name: Android CI
-run-name: "${{ inputs.repository || github.repository }} • ${{ inputs.module || 'auto modules' }} • ${{ inputs.build_type }} • ${{ inputs.os_version }} • #${{ github.run_number }}"
+run-name: "${{ inputs.repository || github.repository }} • ${{ inputs.branch || 'default branch' }} • ${{ inputs.module || 'app' }} • ${{ inputs.build_type }} • #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
@@ -170,6 +170,10 @@ on:
         type: string
         required: false
         default: "auto"
+      resolved_source_ref:
+        type: string
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -305,6 +309,7 @@ jobs:
         working-directory: source
         env:
           REQUESTED_BRANCH: ${{ inputs.branch }}
+          RESOLVED_SOURCE_REF: ${{ inputs.resolved_source_ref }}
         run: |
           set -euo pipefail
 
@@ -313,7 +318,9 @@ jobs:
           CURRENT_BRANCH="$(git branch --show-current || true)"
           REMOTE_HEAD="$(git symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
 
-          if [ -n "$CURRENT_BRANCH" ]; then
+          if [ -n "$RESOLVED_SOURCE_REF" ]; then
+            SOURCE_REF="$RESOLVED_SOURCE_REF"
+          elif [ -n "$CURRENT_BRANCH" ]; then
             SOURCE_REF="$CURRENT_BRANCH"
           elif [ -n "$REQUESTED_BRANCH" ]; then
             SOURCE_REF="$REQUESTED_BRANCH"
@@ -749,7 +756,7 @@ jobs:
 
 
   test:
-    name: "Test • AGP ${{ needs.setup-matrix.outputs.agp_version }} • Gradle ${{ needs.setup-matrix.outputs.resolved_gradle_version }} • JDK ${{ needs.setup-matrix.outputs.resolved_jdk_version }}"
+    name: "Test • ${{ needs.setup-matrix.outputs.source_ref }} • AGP ${{ needs.setup-matrix.outputs.agp_version }} • Gradle ${{ needs.setup-matrix.outputs.resolved_gradle_version }} • JDK ${{ needs.setup-matrix.outputs.resolved_jdk_version }}"
     if: ${{ inputs.build_test }}
     needs: setup-matrix
     runs-on: ${{ inputs.os_version }}
@@ -818,7 +825,7 @@ jobs:
           bash "$CI_HELPERS_DIR/run-gradle.sh"
 
   build:
-    name: "Build • ${{ matrix.module }} • ${{ matrix.gradle_task }} • AGP ${{ needs.setup-matrix.outputs.agp_version }} • Gradle ${{ needs.setup-matrix.outputs.resolved_gradle_version }} • JDK ${{ needs.setup-matrix.outputs.resolved_jdk_version }}"
+    name: "Build • ${{ needs.setup-matrix.outputs.source_ref }} • ${{ matrix.module }} • ${{ matrix.gradle_task }} • AGP ${{ needs.setup-matrix.outputs.agp_version }} • Gradle ${{ needs.setup-matrix.outputs.resolved_gradle_version }} • JDK ${{ needs.setup-matrix.outputs.resolved_jdk_version }}"
     needs: setup-matrix
     runs-on: ${{ inputs.os_version }}
     strategy:
