@@ -233,7 +233,7 @@ jobs:
       toolchain_warning: ${{ steps.toolchain.outputs.toolchain_warning }}
       resolved_ndk_version: ${{ steps.ndk.outputs.resolved_ndk_version }}
       resolved_ndk_revision: ${{ steps.ndk.outputs.resolved_ndk_revision }}
-      resolved_ndk_package_version: ${{ steps.ndk.outputs.resolved_ndk_package_version }}
+      resolved_ndk_pkg_revision: ${{ steps.ndk.outputs.resolved_ndk_pkg_revision }}
       ndk_version_source: ${{ steps.ndk.outputs.ndk_version_source }}
       ndk_detection_status: ${{ steps.ndk.outputs.ndk_detection_status }}
       matrix: ${{ steps.meta.outputs.matrix }}
@@ -733,7 +733,7 @@ jobs:
               "ndk_version_requested": ${{ toJson(inputs.ndk_version) }},
               "ndk_version": ${{ toJson(steps.ndk.outputs.resolved_ndk_version) }},
               "ndk_revision": ${{ toJson(steps.ndk.outputs.resolved_ndk_revision) }},
-              "ndk_package_version": ${{ toJson(steps.ndk.outputs.resolved_ndk_package_version) }},
+              "ndk_pkg_revision": ${{ toJson(steps.ndk.outputs.resolved_ndk_pkg_revision) }},
               "ndk_version_source": ${{ toJson(steps.ndk.outputs.ndk_version_source) }},
               "ndk_detection_status": ${{ toJson(steps.ndk.outputs.ndk_detection_status) }},
               "gradle_version_requested": ${{ toJson(inputs.gradle_version) }},
