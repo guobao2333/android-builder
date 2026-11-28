@@ -479,6 +479,10 @@ jobs:
 
               requested = module_input or "auto"
               scanned = set(task_cache)
+              detected_candidates = module_candidates or [
+                  module for module in all_modules
+                  if module in scanned and is_installable_app(task_cache[module])
+              ]
               lines = [
                   "## Android module detection",
                   "",
@@ -486,7 +490,7 @@ jobs:
                   f"- **Requested module:** `{requested}`",
                   f"- **Selection mode:** `{module_selection_mode}`",
                   f"- **Detected Gradle subprojects:** {len(all_modules)}",
-                  f"- **Application candidates:** {', '.join(module_candidates) if module_candidates else 'none detected / not fully inspected'}",
+                  f"- **Application candidates:** {', '.join(detected_candidates) if detected_candidates else 'none detected / not fully inspected'}",
                   f"- **Resolved module(s):** {', '.join(selected_modules) if selected_modules else 'none'}",
                   f"- **Selection reason:** {module_selection_reason}",
               ]
@@ -503,7 +507,7 @@ jobs:
                   tasks = task_cache.get(module)
                   if module in selected_modules:
                       result = "Selected application"
-                  elif module in module_candidates:
+                  elif module in detected_candidates:
                       result = "Application candidate"
                   elif module in scanned:
                       result = "No installable application tasks"
@@ -650,6 +654,7 @@ jobs:
                   module for module in all_modules
                   if module in task_cache and is_installable_app(task_cache[module])
               ]
+              module_selection_reason = f"Selection failed: {exc}"
               format_error(str(exc))
 
           candidate_modules = selection["selected"]
