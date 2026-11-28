@@ -111,7 +111,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             metadata = resolve_preview_download(ns.preview_download, ns.platform)
             if metadata is None:
                 return 1
-            print("\\t".join((metadata["url"], metadata["sha1"], metadata["format"], metadata["pkg_revision"])))
+            print("|".join((metadata["url"], metadata["sha1"], metadata["format"], metadata["pkg_revision"])))
             return 0
     except ValueError as exc:
         print(f"::error::{exc}", file=sys.stderr)
