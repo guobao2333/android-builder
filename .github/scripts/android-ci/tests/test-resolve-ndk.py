@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,10 +16,22 @@ MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 import sys
 sys.path.insert(0, str(SCRIPT.parent))
+from ndk_versions import resolve_ndk_package_version, resolve_ndk_revision
 SPEC.loader.exec_module(MODULE)
 
 
 class ResolveNdkTests(unittest.TestCase):
+    def test_gradle_base_revision_maps_to_beta_sdk_package(self):
+        self.assertEqual(resolve_ndk_revision("29.0.13113456"), "29.0.13113456")
+        self.assertEqual(
+            resolve_ndk_package_version("29.0.13113456"),
+            "29.0.13113456-beta1",
+        )
+
+    def test_stable_alias_keeps_stable_sdk_package(self):
+        self.assertEqual(resolve_ndk_revision("r29"), "29.0.14033849")
+        self.assertEqual(resolve_ndk_package_version("r29"), "29.0.14033849")
+
     def write(self, root: Path, path: str, content: str) -> None:
         target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -89,6 +103,75 @@ class ResolveNdkTests(unittest.TestCase):
             root = Path(tmp)
             self.write(root, "app/build.gradle", "android { compileSdk 35 }")
             self.assertEqual(MODULE.detect_ndk_versions(root), ([], []))
+
+ 
+class VerifyNdkTests(unittest.TestCase):
+    def test_sdkmanager_installs_beta_package_and_verifies_base_revision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sdk_root = root / "sdk"
+            sdkmanager = sdk_root / "cmdline-tools" / "latest" / "bin" / "sdkmanager"
+            sdkmanager.parent.mkdir(parents=True)
+            log = root / "sdkmanager.log"
+
+            sdkmanager.write_text(
+                """#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SDKMANAGER_LOG"
+sdk_root=""
+package=""
+install=false
+for arg in "$@"; do
+    case "$arg" in
+        --sdk_root=*) sdk_root="${arg#*=}" ;;
+        --install) install=true ;;
+        ndk\\;*) package="$arg" ;;
+    esac
+done
+if [ "$install" = true ]; then
+    [ "$package" = "ndk;29.0.13113456-beta1" ] || exit 23
+    ndk="$sdk_root/ndk/29.0.13113456"
+    toolchain="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+    mkdir -p "$toolchain"
+    cat > "$ndk/source.properties" <<'PROPERTIES'
+Pkg.Desc = Android NDK
+Pkg.Revision = 29.0.13113456-beta1
+Pkg.BaseRevision = 29.0.13113456
+PROPERTIES
+    printf '#!/usr/bin/env bash\\nexit 0\\n' > "$toolchain/llvm-strip"
+    chmod +x "$toolchain/llvm-strip"
+fi
+""",
+                encoding="utf-8",
+            )
+            sdkmanager.chmod(0o755)
+
+            github_env = root / "github.env"
+            github_path = root / "github.path"
+            env = os.environ.copy()
+            env.update({
+                "ANDROID_HOME": str(sdk_root),
+                "CI_HELPERS_DIR": str(SCRIPT.parent),
+                "REQUESTED_NDK_VERSION": "29.0.13113456",
+                "SDKMANAGER_LOG": str(log),
+                "GITHUB_ENV": str(github_env),
+                "GITHUB_PATH": str(github_path),
+                "HOME": str(root / "home"),
+            })
+
+            result = subprocess.run(
+                ["bash", str(SCRIPT.parent / "verify-ndk.sh")],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            calls = log.read_text(encoding="utf-8")
+            self.assertIn("ndk;29.0.13113456-beta1", calls)
+            self.assertIn("--channel=3", calls)
+            self.assertIn("ANDROID_NDK_HOME=", github_env.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
