@@ -145,14 +145,10 @@ verify_sha1() {
 }
 
 install_preview_ndk() {
-  local metadata url expected_sha1 archive_format
+  local metadata="$1"
+  local url expected_sha1 archive_format
   local work_dir archive extract_dir source_properties source_dir staging_dir
   local mount_dir mounted=false
-
-  if ! metadata="$(python3 "$SCRIPT_DIR/ndk_versions.py" \
-    --preview-download "$REQUESTED_NDK_VERSION" --platform "$NDK_PLATFORM")"; then
-    return 1
-  fi
 
   IFS='|' read -r url expected_sha1 archive_format _ <<< "$metadata"
   if [ -z "$url" ] || [ -z "$expected_sha1" ] || [ -z "$archive_format" ]; then
@@ -300,7 +296,10 @@ fi
 
 if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
   echo "::warning::Canonical NDK is missing or incomplete: $CANONICAL_NDK_DIR"
-  if ! install_preview_ndk; then
+  if PREVIEW_METADATA="$(python3 "$SCRIPT_DIR/ndk_versions.py" \
+    --preview-download "$REQUESTED_NDK_VERSION" --platform "$NDK_PLATFORM" 2>/dev/null)"; then
+    install_preview_ndk "$PREVIEW_METADATA"
+  else
     install_sdkmanager_ndk
   fi
 fi
