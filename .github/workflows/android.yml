@@ -386,6 +386,7 @@ jobs:
         uses: ./.android-ci-workflow/.github/actions/android-ci-prepare
         with:
           helpers_dir: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          project_dir: ${{ github.workspace }}/source
           runner_label: ubuntu-latest
           jdk_version: ${{ steps.toolchain.outputs.resolved_jdk_version }}
           ndk_version: ${{ steps.ndk.outputs.resolved_ndk_version }}
@@ -893,6 +894,7 @@ jobs:
         uses: ./.android-ci-workflow/.github/actions/android-ci-prepare
         with:
           helpers_dir: ${{ github.workspace }}/${{ env.CI_WORKFLOW_CHECKOUT_PATH }}/${{ env.CI_HELPERS_RELATIVE_PATH }}
+          project_dir: ${{ github.workspace }}
           runner_label: ${{ inputs.os_version }}
           jdk_version: ${{ needs.setup-matrix.outputs.resolved_jdk_version }}
           ndk_version: ${{ needs.setup-matrix.outputs.resolved_ndk_version }}
