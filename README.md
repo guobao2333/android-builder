@@ -422,7 +422,7 @@ gh workflow run android.yml \
 - `signing=true` was selected but signing variables/repository config are incomplete; the workflow falls back to `-Punsigned` for release/AAB/aggregate tasks, but the target project also needs to support that unsigned property.
 - Custom `pre_build_command` fails.
 - Auto pre-build mode runs but does not produce `app/libs/libcore.aar`.
-- Requested NDK version cannot be installed, no complete cached NDK is found, the host-specific NDK toolchain is missing, or repair still leaves the NDK incomplete.
+- The requested NDK version cannot be installed, the SDK Manager package/channel is unavailable, the host-specific NDK toolchain is missing, or verification still finds the installation incomplete.
 
 ## License
 
