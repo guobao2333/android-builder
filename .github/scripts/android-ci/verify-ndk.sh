@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 resolve_default_sdk_root() {
   case "$(uname -s)" in
     Darwin) echo "$HOME/Library/Android/sdk" ;;
@@ -21,18 +23,33 @@ resolve_ndk_host_tag() {
   esac
 }
 
+resolve_ndk_platform() {
+  case "$(uname -s)" in
+    Darwin) echo "darwin" ;;
+    Linux) echo "linux" ;;
+    *)
+      echo "::error::Unsupported NDK preview archive host OS: $(uname -s)"
+      exit 1
+      ;;
+  esac
+}
+
 DEFAULT_SDK_ROOT="$(resolve_default_sdk_root)"
-# Use the SDK root initialized by android-actions/setup-android. Fall back to
-# the standard runner SDK location only if the environment is not populated.
 SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$DEFAULT_SDK_ROOT}}"
 echo "Android SDK paths: ANDROID_HOME=${ANDROID_HOME:-<unset>} ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-<unset>} SDK_ROOT=$SDK_ROOT"
 echo "Resolved SDK root: $(readlink -f "$SDK_ROOT" 2>/dev/null || echo "$SDK_ROOT")"
+
 REQUESTED_NDK_VERSION="${REQUESTED_NDK_VERSION:-}"
 NDK_HOST_TAG="$(resolve_ndk_host_tag)"
+NDK_PLATFORM="$(resolve_ndk_platform)"
 TOOLCHAIN_REL="toolchains/llvm/prebuilt/${NDK_HOST_TAG}/bin/llvm-strip"
 
 resolve_ndk_revision() {
-  python3 "${CI_HELPERS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/ndk_versions.py" --resolve "$1"
+  python3 "$SCRIPT_DIR/ndk_versions.py" --resolve "$1"
+}
+
+resolve_ndk_pkg_revision() {
+  python3 "$SCRIPT_DIR/ndk_versions.py" --pkg-revision "$1"
 }
 
 read_ndk_revision() {
@@ -46,7 +63,7 @@ read_ndk_revision() {
   fi
 }
 
-read_ndk_package_version() {
+read_ndk_pkg_revision() {
   local dir="$1"
   if [ -f "$dir/source.properties" ]; then
     awk -F'= *' '/^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$dir/source.properties"
@@ -61,13 +78,13 @@ has_llvm_strip() {
 is_requested_revision() {
   local dir="${1:-}"
   local revision=""
-  local package_version=""
+  local pkg_revision=""
   [ -n "$dir" ] || return 1
   [ -d "$dir" ] || return 1
   revision="$(read_ndk_revision "$dir" || true)"
-  package_version="$(read_ndk_package_version "$dir" || true)"
+  pkg_revision="$(read_ndk_pkg_revision "$dir" || true)"
   [ "$revision" = "$REQUESTED_NDK_REVISION" ] &&
-    [ "$package_version" = "$REQUESTED_NDK_PACKAGE_VERSION" ]
+    [ "$pkg_revision" = "$REQUESTED_NDK_PKG_REVISION" ]
 }
 
 candidate_ndk_dirs_from_root() {
@@ -79,8 +96,6 @@ candidate_ndk_dirs_from_root() {
     echo "$root"
   fi
 
-  # Search a bounded depth for source.properties rather than assuming
-  # a fixed SDK Manager package layout.
   find "$root" -mindepth 1 -maxdepth 5 -type f -name source.properties -print 2>/dev/null \
     | while IFS= read -r source_properties; do
         dirname "$source_properties"
@@ -116,33 +131,141 @@ find_complete_requested_ndk() {
   return 1
 }
 
-install_requested_ndk() {
+verify_sha1() {
+  local expected="$1"
+  local file="$2"
+  if command -v sha1sum >/dev/null 2>&1; then
+    printf '%s  %s\n' "$expected" "$file" | sha1sum --check --status
+  elif command -v shasum >/dev/null 2>&1; then
+    printf '%s  %s\n' "$expected" "$file" | shasum -a 1 --check --status
+  else
+    echo "::error::Neither sha1sum nor shasum is available to verify the NDK archive."
+    return 1
+  fi
+}
+
+install_preview_ndk() {
+  local metadata url expected_sha1 archive_format
+  local work_dir archive extract_dir source_properties source_dir staging_dir
+  local mount_dir mounted=false
+
+  if ! metadata="$(python3 "$SCRIPT_DIR/ndk_versions.py" \
+    --preview-download "$REQUESTED_NDK_VERSION" --platform "$NDK_PLATFORM")"; then
+    return 1
+  fi
+
+  IFS='|' read -r url expected_sha1 archive_format _ <<< "$metadata"
+  if [ -z "$url" ] || [ -z "$expected_sha1" ] || [ -z "$archive_format" ]; then
+    echo "::error::Incomplete official preview archive metadata for NDK $REQUESTED_NDK_VERSION."
+    return 1
+  fi
+
+  work_dir="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/ndk-preview.XXXXXX")"
+  archive="$work_dir/ndk-preview.$archive_format"
+  extract_dir="$work_dir/extracted"
+  staging_dir="$SDK_ROOT/ndk/.install-${REQUESTED_NDK_REVISION}-$$"
+  mkdir -p "$extract_dir"
+
+  echo "Installing official NDK preview archive for base revision $REQUESTED_NDK_REVISION."
+  echo "Download: $url"
+  echo "Expected SHA-1: $expected_sha1"
+
+  curl --fail --location --retry 3 --retry-delay 2 \
+    --connect-timeout 30 "$url" --output "$archive"
+
+  if ! verify_sha1 "$expected_sha1" "$archive"; then
+    echo "::error::SHA-1 verification failed for the official NDK archive."
+    rm -rf "$work_dir"
+    return 1
+  fi
+  echo "Official NDK archive SHA-1 verified."
+
+  case "$archive_format" in
+    zip)
+      command -v unzip >/dev/null 2>&1 || {
+        echo "::error::unzip is required to extract the NDK archive."
+        rm -rf "$work_dir"
+        return 1
+      }
+      unzip -q "$archive" -d "$extract_dir"
+      ;;
+    dmg)
+      command -v hdiutil >/dev/null 2>&1 || {
+        echo "::error::hdiutil is required to mount the NDK DMG archive."
+        rm -rf "$work_dir"
+        return 1
+      }
+      mount_dir="$work_dir/mounted"
+      mkdir -p "$mount_dir"
+      hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" "$archive" >/dev/null
+      mounted=true
+      extract_dir="$mount_dir"
+      ;;
+    *)
+      echo "::error::Unsupported NDK preview archive format: $archive_format"
+      rm -rf "$work_dir"
+      return 1
+      ;;
+  esac
+
+  source_properties="$(find "$extract_dir" -type f -name source.properties -print -quit 2>/dev/null || true)"
+  if [ -z "$source_properties" ]; then
+    echo "::error::The downloaded NDK archive does not contain source.properties."
+    if [ "$mounted" = true ]; then hdiutil detach "$mount_dir" >/dev/null || true; fi
+    rm -rf "$work_dir"
+    return 1
+  fi
+
+  source_dir="$(dirname "$source_properties")"
+  rm -rf "$staging_dir"
+  mkdir -p "$staging_dir"
+  cp -a "$source_dir/." "$staging_dir/"
+
+  if ! is_requested_revision "$staging_dir"; then
+    echo "::error::Downloaded NDK metadata mismatch: expected base=$REQUESTED_NDK_REVISION and Pkg.Revision=$REQUESTED_NDK_PKG_REVISION."
+    rm -rf "$staging_dir"
+    if [ "$mounted" = true ]; then hdiutil detach "$mount_dir" >/dev/null || true; fi
+    rm -rf "$work_dir"
+    return 1
+  fi
+  if ! has_llvm_strip "$staging_dir"; then
+    echo "::error::Downloaded NDK is missing the required host toolchain binary: $TOOLCHAIN_REL."
+    rm -rf "$staging_dir"
+    if [ "$mounted" = true ]; then hdiutil detach "$mount_dir" >/dev/null || true; fi
+    rm -rf "$work_dir"
+    return 1
+  fi
+
+  rm -rf "$CANONICAL_NDK_DIR"
+  mv "$staging_dir" "$CANONICAL_NDK_DIR"
+
+  if [ "$mounted" = true ]; then hdiutil detach "$mount_dir" >/dev/null; fi
+  rm -rf "$work_dir"
+  echo "Installed official NDK preview archive into $CANONICAL_NDK_DIR."
+}
+
+install_sdkmanager_ndk() {
   local sdkmanager
   sdkmanager="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
   if [ ! -x "$sdkmanager" ]; then
     sdkmanager="$(command -v sdkmanager || true)"
   fi
   if [ -z "$sdkmanager" ]; then
-    echo "::error::sdkmanager was not found; cannot install ndk;$REQUESTED_NDK_PACKAGE_VERSION."
+    echo "::error::sdkmanager was not found; cannot install ndk;$REQUESTED_NDK_REVISION."
     exit 1
   fi
 
-  echo "Installing SDK package ndk;$REQUESTED_NDK_PACKAGE_VERSION (Gradle base revision $REQUESTED_NDK_REVISION)."
+  echo "Installing stable SDK Manager package ndk;$REQUESTED_NDK_REVISION."
   echo "sdkmanager: $sdkmanager"
-  echo "sdkmanager SDK root: $SDK_ROOT"
   rm -rf "$CANONICAL_NDK_DIR"
 
-  # Capture sdkmanager's exit status explicitly. With errexit enabled, a
-  # failing pipeline can terminate the script before PIPESTATUS is read.
   set +e
   set +o pipefail
   yes 2>/dev/null | "$sdkmanager" --sdk_root="$SDK_ROOT" --licenses >/dev/null
   license_pipeline_status=( "${PIPESTATUS[@]}" )
   license_status="${license_pipeline_status[1]:-1}"
 
-  # Channel 3 includes stable, beta, and canary releases. The requested
-  # revision is pinned explicitly, so this cannot silently select a newer NDK.
-  yes 2>/dev/null | "$sdkmanager" --sdk_root="$SDK_ROOT" --install "ndk;$REQUESTED_NDK_PACKAGE_VERSION" --channel=3
+  yes 2>/dev/null | "$sdkmanager" --sdk_root="$SDK_ROOT" --install "ndk;$REQUESTED_NDK_REVISION"
   install_pipeline_status=( "${PIPESTATUS[@]}" )
   install_status="${install_pipeline_status[1]:-1}"
   set -o pipefail
@@ -152,7 +275,7 @@ install_requested_ndk() {
     echo "::warning::sdkmanager --licenses exited with status $license_status; continuing because licenses may already be accepted."
   fi
   if [ "$install_status" -ne 0 ]; then
-    echo "::error::sdkmanager failed to install ndk;$REQUESTED_NDK_PACKAGE_VERSION with status $install_status."
+    echo "::error::sdkmanager failed to install ndk;$REQUESTED_NDK_REVISION with status $install_status."
     exit "$install_status"
   fi
 }
@@ -163,7 +286,7 @@ if [ -z "$REQUESTED_NDK_VERSION" ]; then
 fi
 
 REQUESTED_NDK_REVISION="$(resolve_ndk_revision "$REQUESTED_NDK_VERSION")"
-REQUESTED_NDK_PACKAGE_VERSION="$(python3 "${CI_HELPERS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/ndk_versions.py" --package-version "$REQUESTED_NDK_VERSION")"
+REQUESTED_NDK_PKG_REVISION="$(resolve_ndk_pkg_revision "$REQUESTED_NDK_VERSION")"
 CANONICAL_NDK_DIR="$SDK_ROOT/ndk/$REQUESTED_NDK_REVISION"
 mkdir -p "$SDK_ROOT/ndk"
 
@@ -177,13 +300,15 @@ fi
 
 if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
   echo "::warning::Canonical NDK is missing or incomplete: $CANONICAL_NDK_DIR"
-  install_requested_ndk
+  if ! install_preview_ndk; then
+    install_sdkmanager_ndk
+  fi
 fi
 
 if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
-  echo "::error::NDK installation is incomplete after repair: missing $CANONICAL_NDK_DIR/$TOOLCHAIN_REL or source.properties base/package revisions do not match $REQUESTED_NDK_REVISION / $REQUESTED_NDK_PACKAGE_VERSION."
+  echo "::error::NDK installation is incomplete: expected base revision $REQUESTED_NDK_REVISION, Pkg.Revision $REQUESTED_NDK_PKG_REVISION, and $TOOLCHAIN_REL."
   echo "Detected SDK NDK directories:"
-  find "$SDK_ROOT/ndk" -maxdepth 2 -name source.properties -print -exec awk -F'= *' '/^Pkg.Revision/ {print "  " FILENAME ": " $2}' {} \; 2>/dev/null || true
+  find "$SDK_ROOT/ndk" -maxdepth 2 -name source.properties -print -exec awk -F'= *' '/^Pkg.(Base)?Revision/ {print "  " FILENAME ": " $0}' {} \\; 2>/dev/null || true
   exit 1
 fi
 
@@ -196,4 +321,4 @@ fi
   echo "$CANONICAL_NDK_DIR/toolchains/llvm/prebuilt/$NDK_HOST_TAG/bin"
 } >> "$GITHUB_PATH"
 
-echo "NDK verified: $REQUESTED_NDK_VERSION -> base=$REQUESTED_NDK_REVISION package=$REQUESTED_NDK_PACKAGE_VERSION ($CANONICAL_NDK_DIR, host=$NDK_HOST_TAG)"
+echo "NDK verified: $REQUESTED_NDK_VERSION -> base=$REQUESTED_NDK_REVISION Pkg.Revision=$REQUESTED_NDK_PKG_REVISION ($CANONICAL_NDK_DIR, host=$NDK_HOST_TAG)"
