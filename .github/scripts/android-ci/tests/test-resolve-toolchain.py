@@ -132,6 +132,75 @@ class ResolveToolchainTest(unittest.TestCase):
         self.assertEqual(values["resolved_jdk_version"], "17")
         self.assertEqual(values["gradle_install_mode"], "setup-gradle")
 
+    def test_auto_jdk_includes_project_java_and_kotlin_toolchain_requirements(self) -> None:
+        values = self.run_resolver({
+            "settings.gradle": """
+                plugins {
+                    id 'com.android.application' version '9.1.1' apply false
+                }
+            """,
+            "gradle/wrapper/gradle-wrapper.properties":
+                "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.3.1-bin.zip\\n",
+            "gradlew": "#!/bin/sh\\n",
+            "build.gradle": """
+                subprojects {
+                    android {
+                        compileOptions {
+                            sourceCompatibility = JavaVersion.VERSION_21
+                            targetCompatibility = JavaVersion.VERSION_21
+                        }
+                    }
+                }
+            """,
+            "manager/build.gradle": """
+                kotlin {
+                    jvmToolchain(21)
+                }
+            """,
+        })
+        self.assertEqual(values["agp_version"], "9.1.1")
+        self.assertEqual(values["resolved_gradle_version"], "9.3.1")
+        self.assertEqual(values["gradle_min_jdk"], "17")
+        self.assertEqual(values["project_java_minimum"], "21")
+        self.assertEqual(values["project_java_versions"], "21")
+        self.assertEqual(values["resolved_jdk_version"], "21")
+        self.assertEqual(
+            values["jdk_source"],
+            "project Java requirements + AGP/Gradle compatibility",
+        )
+
+    def test_auto_jdk_detects_string_java_compatibility_and_release(self) -> None:
+        values = self.run_resolver({
+            "build.gradle.kts": """
+                java {
+                    sourceCompatibility = JavaVersion.toVersion("21")
+                    targetCompatibility = JavaVersion.toVersion("21")
+                }
+                tasks.withType<JavaCompile>().configureEach {
+                    options.release.set(21)
+                }
+            """,
+        })
+        self.assertEqual(values["project_java_minimum"], "21")
+        self.assertEqual(values["resolved_jdk_version"], "21")
+
+    def test_manual_jdk_below_project_java_requirement_is_incompatible(self) -> None:
+        values = self.run_resolver({
+            "build.gradle": """
+                android {
+                    compileOptions {
+                        sourceCompatibility = JavaVersion.VERSION_21
+                    }
+                }
+            """,
+        }, jdk="17")
+        self.assertEqual(values["resolved_jdk_version"], "17")
+        self.assertEqual(values["toolchain_compatibility_status"], "incompatible")
+        self.assertIn(
+            "below the detected project Java compiler/toolchain requirement 21",
+            values["toolchain_warning"],
+        )
+
     def test_version_catalog_agp_is_detected(self) -> None:
         values = self.run_resolver({
             "settings.gradle.kts": "plugins { alias(libs.plugins.android.application) apply false }",
