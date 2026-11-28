@@ -138,7 +138,7 @@ workflow 会在执行 Gradle 前自动解析 Android 工具链：
 1. 项目已有 `gradlew` 和 `gradle-wrapper.properties` 时，优先遵循项目声明；如果缺少 `gradlew`，但 properties 存在，则安装其中声明的 Gradle 版本作为 CLI，而不是直接跳到最新版。
 2. 没有 Wrapper 版本声明时，会从 buildscript classpath、plugins DSL、Gradle properties/变量以及 `gradle/*.versions.toml` 版本目录识别 AGP，并按 Android 官方兼容表选择最低所需 Gradle。
 3. AGP 和 Wrapper 都无法识别时，`gradle_version=auto` 使用内置默认版本 `8.14.3`。手动选择 `gradle_version` 只覆盖无 Wrapper 声明时的回退版本，不会改写项目 Wrapper。
-4. `jdk_version=auto` 会综合所选 Gradle 的运行时 Java 范围和 AGP 的最低 JDK 要求自动选择。仍支持手动指定，但不兼容时会输出警告。
+4. `jdk_version=auto` 会综合所选 Gradle 的运行时 Java 范围、AGP 的最低 JDK 要求，以及项目声明的 `sourceCompatibility` / `targetCompatibility`、Java `toolchain` 和 Kotlin `jvmToolchain` 等编译要求选择 JDK。若这些要求与 Gradle 可运行的 JDK 范围没有交集，会在构建前明确失败；手动指定不兼容版本时会输出警告。
 5. 检测状态分为 `detected`、`unknown` 和 `not-present`。如果 `gradlew` 存在但无法读取 Wrapper 的 Gradle 版本，自动 JDK 选择会失败并要求手动指定 `jdk_version`；也可以手动指定 `gradle_version`，绕过未知 Wrapper 改用 CLI。
 6. 如果 AGP 与 Wrapper 版本均未知，工具链兼容状态不会标记为 verified；未知值不会参与版本比较。
 
