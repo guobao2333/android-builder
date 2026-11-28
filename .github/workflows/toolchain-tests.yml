@@ -56,6 +56,25 @@ jobs:
             bash -n "$script"
           done < <(find .github -type f -name '*.sh' -print0)
 
+      # This is an end-to-end test against Google's real 773 MB NDK preview
+      # archive, not a mocked sdkmanager. It validates download, SHA-1, extract,
+      # source.properties revisions, and the host LLVM binary.
+      - name: Install and verify the real NDK r29-beta1 archive
+        shell: bash
+        env:
+          ANDROID_HOME: ${{ runner.temp }}/android-sdk
+          CI_HELPERS_DIR: ${{ github.workspace }}/.github/scripts/android-ci
+          REQUESTED_NDK_VERSION: '29.0.13113456'
+        run: |
+          set -euo pipefail
+          mkdir -p "$ANDROID_HOME"
+          bash "$CI_HELPERS_DIR/verify-ndk.sh"
+
+          ndk_dir="$ANDROID_HOME/ndk/29.0.13113456"
+          grep -Fxq 'Pkg.BaseRevision = 29.0.13113456' "$ndk_dir/source.properties"
+          grep -Fxq 'Pkg.Revision = 29.0.13113456-beta1' "$ndk_dir/source.properties"
+          test -x "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+
       - name: Validate GitHub Actions workflows
         shell: bash
         run: |
