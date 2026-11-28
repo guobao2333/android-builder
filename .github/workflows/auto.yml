@@ -31,9 +31,9 @@ on:
         type: choice
         options: ["debug", "release", "all"]
       module:
-        description: "Android Gradle module (native Android projects)"
+        description: "Android module: auto-detect the only application, all detected applications, or comma-separated Gradle paths"
         required: false
-        default: "app"
+        default: "auto"
       build_flavor:
         description: "Android Gradle flavor filter"
         required: false
@@ -127,7 +127,7 @@ jobs:
             --requested "$REQUESTED_PROJECT_TYPE"
 
   android:
-    name: "Android • ${{ needs.detect.outputs.source_ref }} • module ${{ inputs.module || 'app' }} • ${{ inputs.build_type }}"
+    name: "Android • ${{ needs.detect.outputs.source_ref }} • module ${{ inputs.module || 'auto' }} • ${{ inputs.build_type }}"
     needs: detect
     if: ${{ needs.detect.outputs.project_type == 'android' }}
     uses: ./.github/workflows/android.yml
