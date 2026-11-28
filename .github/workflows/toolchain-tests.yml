@@ -47,6 +47,7 @@ jobs:
           python3 .github/scripts/android-ci/tests/test-resolve-toolchain.py
           python3 .github/scripts/android-ci/tests/test-module-detection.py
           python3 .github/scripts/android-ci/tests/test-android-matrix.py
+          python3 .github/scripts/android-ci/tests/test-setup-rust-targets.py
           python3 .github/scripts/android-ci/tests/test-resolve-ndk.py
           python3 .github/scripts/flutter-ci/tests/test-resolve-flutter.py
           python3 .github/scripts/flutter-ci/tests/test-configure-android-renderer.py
@@ -76,6 +77,33 @@ jobs:
           grep -Fxq 'Pkg.BaseRevision = 29.0.13113456' "$ndk_dir/source.properties"
           grep -Fxq 'Pkg.Revision = 29.0.13113456-beta1' "$ndk_dir/source.properties"
           test -x "$ndk_dir/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip"
+
+      # The host runner's Rust toolchain also needs Android target std libraries.
+      # Validate the exact target setup helper and prove rustc can compile for Android.
+      - name: Install and verify the Android Rust target
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/android-rust-target-fixture"
+          mkdir -p "$fixture"
+          printf '[package]\nname = "android-rust-target-check"\nversion = "0.1.0"\nedition = "2021"\n' > "$fixture/Cargo.toml"
+          cat > "$fixture/build.gradle" <<'EOF'
+          tasks.register('buildNative', Exec) {
+              commandLine('cargo', 'build', '--target', 'aarch64-linux-android')
+          }
+          EOF
+          python3 .github/scripts/android-ci/setup-rust-targets.py --root "$fixture"
+          cat > "$fixture/lib.rs" <<'EOF'
+          #![no_std]
+          pub fn target_check(value: u32) -> u32 {
+              value + 1
+          }
+          EOF
+          mkdir -p "$fixture/out"
+          rustc --target aarch64-linux-android --crate-type lib --emit metadata \
+            "$fixture/lib.rs" --out-dir "$fixture/out"
+          test -n "$(find "$fixture/out" -maxdepth 1 -name '*.rmeta' -print -quit)"
+          echo "Rust Android target aarch64-linux-android passed the no_std compile check."
 
       - name: Validate GitHub Actions workflows
         shell: bash
