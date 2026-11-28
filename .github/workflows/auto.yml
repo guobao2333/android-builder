@@ -127,7 +127,7 @@ jobs:
             --requested "$REQUESTED_PROJECT_TYPE"
 
   android:
-    name: "Android • ${{ needs.detect.outputs.source_ref }} • module ${{ inputs.module || 'app' }} • ${{ inputs.build_type }}
+    name: "Android • ${{ needs.detect.outputs.source_ref }} • module ${{ inputs.module || 'app' }} • ${{ inputs.build_type }}"
     needs: detect
     if: ${{ needs.detect.outputs.project_type == 'android' }}
     uses: ./.github/workflows/android.yml
@@ -144,7 +144,7 @@ jobs:
     secrets: inherit
 
   flutter:
-    name: "Flutter • ${{ needs.detect.outputs.source_ref }} • ${{ inputs.build_type }}
+    name: "Flutter • ${{ needs.detect.outputs.source_ref }} • ${{ inputs.build_type }}"
     needs: detect
     if: ${{ needs.detect.outputs.project_type == 'flutter' }}
     uses: ./.github/workflows/flutter.yml
@@ -160,7 +160,7 @@ jobs:
     secrets: inherit
 
   godot:
-    name: "Godot • ${{ needs.detect.outputs.source_ref }} • ${{ inputs.build_type }}
+    name: "Godot • ${{ needs.detect.outputs.source_ref }} • ${{ inputs.build_type }}"
     needs: detect
     if: ${{ needs.detect.outputs.project_type == 'godot' }}
     uses: ./.github/workflows/godot.yml
