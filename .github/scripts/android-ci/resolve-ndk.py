@@ -9,7 +9,7 @@ import re
 import sys
 from pathlib import Path
 
-from ndk_versions import resolve_ndk_revision
+from ndk_versions import resolve_ndk_package_version, resolve_ndk_revision
 
 EXCLUDED_DIRS = {".git", ".gradle", ".idea", ".kotlin", "build", "node_modules"}
 GRADLE_NAMES = {"build.gradle", "build.gradle.kts", "gradle.properties"}
@@ -181,6 +181,7 @@ def main() -> int:
 
     try:
         revision = resolve_ndk_revision(selected)
+        package_version = resolve_ndk_package_version(selected)
     except ValueError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
@@ -188,11 +189,12 @@ def main() -> int:
     write_outputs({
         "resolved_ndk_version": selected,
         "resolved_ndk_revision": revision,
+        "resolved_ndk_package_version": package_version,
         "ndk_version_source": source,
         "ndk_detection_status": "detected" if detected else ("not-present" if requested == "auto" else "manual"),
         "detected_ndk_versions": ",".join(detected) if detected else "none",
     })
-    print(f"Resolved NDK: {selected} -> {revision} ({source})")
+    print(f"Resolved NDK: {selected} -> base={revision}, SDK package={package_version} ({source})")
     return 0
 
 
