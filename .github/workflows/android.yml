@@ -1,5 +1,5 @@
 name: Android CI
-run-name: "${{ inputs.repository || github.repository }} • ${{ inputs.branch || 'default branch' }} • ${{ inputs.module || 'app' }} • ${{ inputs.build_type }} • #${{ github.run_number }}"
+run-name: "${{ inputs.repository || github.repository }} • ${{ inputs.branch || 'default branch' }} • ${{ inputs.module || 'app' }} • ${{ inputs.build_type }} • ${{ inputs.os_version }} • #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
