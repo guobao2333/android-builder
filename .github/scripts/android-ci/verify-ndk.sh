@@ -38,6 +38,17 @@ resolve_ndk_revision() {
 read_ndk_revision() {
   local dir="$1"
   if [ -f "$dir/source.properties" ]; then
+    awk -F'= *' '
+      /^Pkg.BaseRevision/ {gsub(/[[:space:]]/, "", $2); base=$2}
+      /^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); revision=$2}
+      END {if (base != "") print base; else if (revision != "") print revision}
+    ' "$dir/source.properties"
+  fi
+}
+
+read_ndk_package_version() {
+  local dir="$1"
+  if [ -f "$dir/source.properties" ]; then
     awk -F'= *' '/^Pkg.Revision/ {gsub(/[[:space:]]/, "", $2); print $2; exit}' "$dir/source.properties"
   fi
 }
@@ -50,10 +61,13 @@ has_llvm_strip() {
 is_requested_revision() {
   local dir="${1:-}"
   local revision=""
+  local package_version=""
   [ -n "$dir" ] || return 1
   [ -d "$dir" ] || return 1
   revision="$(read_ndk_revision "$dir" || true)"
-  [ "$revision" = "$REQUESTED_NDK_REVISION" ]
+  package_version="$(read_ndk_package_version "$dir" || true)"
+  [ "$revision" = "$REQUESTED_NDK_REVISION" ] &&
+    [ "$package_version" = "$REQUESTED_NDK_PACKAGE_VERSION" ]
 }
 
 candidate_ndk_dirs_from_root() {
@@ -109,11 +123,11 @@ install_requested_ndk() {
     sdkmanager="$(command -v sdkmanager || true)"
   fi
   if [ -z "$sdkmanager" ]; then
-    echo "::error::sdkmanager was not found; cannot install ndk;$REQUESTED_NDK_REVISION."
+    echo "::error::sdkmanager was not found; cannot install ndk;$REQUESTED_NDK_PACKAGE_VERSION."
     exit 1
   fi
 
-  echo "Installing ndk;$REQUESTED_NDK_REVISION with sdkmanager."
+  echo "Installing SDK package ndk;$REQUESTED_NDK_PACKAGE_VERSION (Gradle base revision $REQUESTED_NDK_REVISION)."
   echo "sdkmanager: $sdkmanager"
   echo "sdkmanager SDK root: $SDK_ROOT"
   rm -rf "$CANONICAL_NDK_DIR"
@@ -128,7 +142,7 @@ install_requested_ndk() {
 
   # Channel 3 includes stable, beta, and canary releases. The requested
   # revision is pinned explicitly, so this cannot silently select a newer NDK.
-  yes 2>/dev/null | "$sdkmanager" --sdk_root="$SDK_ROOT" --install "ndk;$REQUESTED_NDK_REVISION" --channel=3
+  yes 2>/dev/null | "$sdkmanager" --sdk_root="$SDK_ROOT" --install "ndk;$REQUESTED_NDK_PACKAGE_VERSION" --channel=3
   install_pipeline_status=( "${PIPESTATUS[@]}" )
   install_status="${install_pipeline_status[1]:-1}"
   set -o pipefail
@@ -138,7 +152,7 @@ install_requested_ndk() {
     echo "::warning::sdkmanager --licenses exited with status $license_status; continuing because licenses may already be accepted."
   fi
   if [ "$install_status" -ne 0 ]; then
-    echo "::error::sdkmanager failed to install ndk;$REQUESTED_NDK_REVISION with status $install_status."
+    echo "::error::sdkmanager failed to install ndk;$REQUESTED_NDK_PACKAGE_VERSION with status $install_status."
     exit "$install_status"
   fi
 }
@@ -149,6 +163,7 @@ if [ -z "$REQUESTED_NDK_VERSION" ]; then
 fi
 
 REQUESTED_NDK_REVISION="$(resolve_ndk_revision "$REQUESTED_NDK_VERSION")"
+REQUESTED_NDK_PACKAGE_VERSION="$(python3 "${CI_HELPERS_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/ndk_versions.py" --package-version "$REQUESTED_NDK_VERSION")"
 CANONICAL_NDK_DIR="$SDK_ROOT/ndk/$REQUESTED_NDK_REVISION"
 mkdir -p "$SDK_ROOT/ndk"
 
@@ -166,7 +181,7 @@ if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_
 fi
 
 if ! has_llvm_strip "$CANONICAL_NDK_DIR" || ! is_requested_revision "$CANONICAL_NDK_DIR"; then
-  echo "::error::NDK installation is incomplete after repair: missing $CANONICAL_NDK_DIR/$TOOLCHAIN_REL or source.properties revision is not $REQUESTED_NDK_REVISION."
+  echo "::error::NDK installation is incomplete after repair: missing $CANONICAL_NDK_DIR/$TOOLCHAIN_REL or source.properties base/package revisions do not match $REQUESTED_NDK_REVISION / $REQUESTED_NDK_PACKAGE_VERSION."
   echo "Detected SDK NDK directories:"
   find "$SDK_ROOT/ndk" -maxdepth 2 -name source.properties -print -exec awk -F'= *' '/^Pkg.Revision/ {print "  " FILENAME ": " $2}' {} \; 2>/dev/null || true
   exit 1
@@ -181,4 +196,4 @@ fi
   echo "$CANONICAL_NDK_DIR/toolchains/llvm/prebuilt/$NDK_HOST_TAG/bin"
 } >> "$GITHUB_PATH"
 
-echo "NDK verified: $REQUESTED_NDK_VERSION -> $REQUESTED_NDK_REVISION ($CANONICAL_NDK_DIR, host=$NDK_HOST_TAG)"
+echo "NDK verified: $REQUESTED_NDK_VERSION -> base=$REQUESTED_NDK_REVISION package=$REQUESTED_NDK_PACKAGE_VERSION ($CANONICAL_NDK_DIR, host=$NDK_HOST_TAG)"
