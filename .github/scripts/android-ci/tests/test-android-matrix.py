@@ -104,6 +104,17 @@ class AndroidMatrixIntegrationTests(unittest.TestCase):
             summary_text = summary.read_text(encoding="utf-8") if summary.exists() else ""
             return process, output_text, summary_text
 
+    def test_every_shared_android_prepare_call_receives_project_root(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8").splitlines()
+        call_indices = [
+            index for index, line in enumerate(workflow)
+            if "uses: ./.android-ci-workflow/.github/actions/android-ci-prepare" in line
+        ]
+        self.assertEqual(len(call_indices), 3)
+        for index in call_indices:
+            action_block = "\\n".join(workflow[index:index + 12])
+            self.assertIn("project_dir:", action_block)
+
     def test_auto_builds_unique_primary_application_not_named_app(self) -> None:
         process, output, summary = self.run_matrix(
             "auto",
