@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import importlib.util
-import os
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,21 +14,21 @@ MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 import sys
 sys.path.insert(0, str(SCRIPT.parent))
-from ndk_versions import resolve_ndk_package_version, resolve_ndk_revision
+from ndk_versions import resolve_ndk_pkg_revision, resolve_ndk_revision, resolve_preview_download
 SPEC.loader.exec_module(MODULE)
 
 
 class ResolveNdkTests(unittest.TestCase):
-    def test_gradle_base_revision_maps_to_beta_sdk_package(self):
+    def test_gradle_base_revision_maps_to_beta_pkg_revision(self):
         self.assertEqual(resolve_ndk_revision("29.0.13113456"), "29.0.13113456")
         self.assertEqual(
-            resolve_ndk_package_version("29.0.13113456"),
+            resolve_ndk_pkg_revision("29.0.13113456"),
             "29.0.13113456-beta1",
         )
 
-    def test_stable_alias_keeps_stable_sdk_package(self):
+    def test_stable_alias_keeps_stable_pkg_revision(self):
         self.assertEqual(resolve_ndk_revision("r29"), "29.0.14033849")
-        self.assertEqual(resolve_ndk_package_version("r29"), "29.0.14033849")
+        self.assertEqual(resolve_ndk_pkg_revision("r29"), "29.0.14033849")
 
     def write(self, root: Path, path: str, content: str) -> None:
         target = root / path
@@ -104,74 +102,39 @@ class ResolveNdkTests(unittest.TestCase):
             self.write(root, "app/build.gradle", "android { compileSdk 35 }")
             self.assertEqual(MODULE.detect_ndk_versions(root), ([], []))
 
+
  
-class VerifyNdkTests(unittest.TestCase):
-    def test_sdkmanager_installs_beta_package_and_verifies_base_revision(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            sdk_root = root / "sdk"
-            sdkmanager = sdk_root / "cmdline-tools" / "latest" / "bin" / "sdkmanager"
-            sdkmanager.parent.mkdir(parents=True)
-            log = root / "sdkmanager.log"
+class NdkPreviewMetadataTests(unittest.TestCase):
+    def test_linux_preview_archive_uses_official_url_and_sha1(self):
+        metadata = resolve_preview_download("29.0.13113456", "linux")
+        self.assertEqual(
+            metadata,
+            {
+                "pkg_revision": "29.0.13113456-beta1",
+                "url": "https://dl.google.com/android/repository/android-ndk-r29-beta1-linux.zip",
+                "sha1": "ec2d8801e42009edf66be853c1bab9ba216378f9",
+                "format": "zip",
+            },
+        )
 
-            sdkmanager.write_text(
-                """#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> "$SDKMANAGER_LOG"
-sdk_root=""
-package=""
-install=false
-for arg in "$@"; do
-    case "$arg" in
-        --sdk_root=*) sdk_root="${arg#*=}" ;;
-        --install) install=true ;;
-        ndk\\;*) package="$arg" ;;
-    esac
-done
-if [ "$install" = true ]; then
-    [ "$package" = "ndk;29.0.13113456-beta1" ] || exit 23
-    ndk="$sdk_root/ndk/29.0.13113456"
-    toolchain="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
-    mkdir -p "$toolchain"
-    cat > "$ndk/source.properties" <<'PROPERTIES'
-Pkg.Desc = Android NDK
-Pkg.Revision = 29.0.13113456-beta1
-Pkg.BaseRevision = 29.0.13113456
-PROPERTIES
-    printf '#!/usr/bin/env bash\\nexit 0\\n' > "$toolchain/llvm-strip"
-    chmod +x "$toolchain/llvm-strip"
-fi
-""",
-                encoding="utf-8",
-            )
-            sdkmanager.chmod(0o755)
+    def test_macos_preview_archive_uses_official_url_and_sha1(self):
+        metadata = resolve_preview_download("29.0.13113456", "darwin")
+        self.assertEqual(
+            metadata,
+            {
+                "pkg_revision": "29.0.13113456-beta1",
+                "url": "https://dl.google.com/android/repository/android-ndk-r29-beta1-darwin.dmg",
+                "sha1": "b3a8e0d8147de981478c8edefe4036440910ee46",
+                "format": "dmg",
+            },
+        )
 
-            github_env = root / "github.env"
-            github_path = root / "github.path"
-            env = os.environ.copy()
-            env.update({
-                "ANDROID_HOME": str(sdk_root),
-                "CI_HELPERS_DIR": str(SCRIPT.parent),
-                "REQUESTED_NDK_VERSION": "29.0.13113456",
-                "SDKMANAGER_LOG": str(log),
-                "GITHUB_ENV": str(github_env),
-                "GITHUB_PATH": str(github_path),
-                "HOME": str(root / "home"),
-            })
+    def test_stable_ndk_does_not_use_preview_archive(self):
+        self.assertIsNone(resolve_preview_download("r29", "linux"))
 
-            result = subprocess.run(
-                ["bash", str(SCRIPT.parent / "verify-ndk.sh")],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=30,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            calls = log.read_text(encoding="utf-8")
-            self.assertIn("ndk;29.0.13113456-beta1", calls)
-            self.assertIn("--channel=3", calls)
-            self.assertIn("ANDROID_NDK_HOME=", github_env.read_text(encoding="utf-8"))
+    def test_preview_archive_rejects_unmapped_platform(self):
+        with self.assertRaises(ValueError):
+            resolve_preview_download("29.0.13113456", "windows")
 
 
 if __name__ == "__main__":
