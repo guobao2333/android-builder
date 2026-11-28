@@ -211,7 +211,7 @@ def install_targets(root: Path, manifests: list[str], targets: list[str]) -> dic
     }
 
 
-def write_summary(root: Path, detection: dict[str, Any], preparation: dict[str, Any], error: str = "") -> None:
+def write_summary(detection: dict[str, Any], preparation: dict[str, Any], error: str = "") -> None:
     rows = [
         "## Android Rust target preparation",
         "",
@@ -255,13 +255,13 @@ def main() -> int:
             "already_installed": [],
             "detail": "Rust target preparation did not complete.",
         }
-        write_summary(root, detection, preparation, str(exc))
+        write_summary(detection, preparation, str(exc))
         print(f"::error::{exc}", file=sys.stderr)
         return 1
 
     if preparation["status"] == "skipped":
         print("No Android Rust target installation was needed.")
-    write_summary(root, detection, preparation)
+    write_summary(detection, preparation)
     output = os.environ.get("GITHUB_OUTPUT", "")
     if output:
         with open(output, "a", encoding="utf-8") as stream:
