@@ -226,6 +226,35 @@ def minimum_jdk_for_agp(agp_version: str, gradle_version: str) -> int:
     return 8
 
 
+def detect_project_java_versions(files: list[Path]) -> list[int]:
+    """Detect Java versions required by project compiler and toolchain settings."""
+
+    patterns = (
+        re.compile(r"\bJavaVersion\.VERSION_(?:1_)?(\d+)\b", re.I),
+        re.compile(r"\bJavaVersion\.toVersion\s*\(\s*['\"]?(1\.\d+|\d+)", re.I),
+        re.compile(r"\bJavaLanguageVersion\.of\s*\(\s*['\"]?(\d+)", re.I),
+        re.compile(r"\bjvmToolchain\s*\(\s*['\"]?(\d+)", re.I),
+        re.compile(
+            r"\b(?:sourceCompatibility|targetCompatibility)\s*(?:=\s*)?['\"]?(1\.\d+|\d+)['\"]?",
+            re.I,
+        ),
+        re.compile(r"\boptions\.release(?:\.set)?\s*(?:=\s*)?['\"]?(1\.\d+|\d+)['\"]?", re.I),
+    )
+    versions: set[int] = set()
+    for path in files:
+        text = read_text(path)
+        for pattern in patterns:
+            for match in pattern.finditer(text):
+                raw = match.group(1)
+                if raw.startswith("1."):
+                    raw = raw[2:]
+                try:
+                    versions.add(int(raw))
+                except ValueError:
+                    continue
+    return sorted(versions)
+
+
 def gradle_jdk_range(version: str) -> tuple[int, int]:
     minimum = 17 if at_least(version, "9.0") else 8
     maximums = (
@@ -272,6 +301,8 @@ def main() -> int:
     agp_versions = detect_agp_versions(files, variables)
     agp_version = agp_versions[-1] if agp_versions else ""
     agp_status = "detected" if agp_version else "unknown"
+    project_java_versions = detect_project_java_versions(files)
+    project_java_minimum = max(project_java_versions, default=0)
     agp_required_gradle = required_gradle_for_agp(agp_version)
     wrapper_version = find_wrapper_version(root)
     wrapper_script = (root / "gradlew").is_file()
@@ -363,17 +394,12 @@ def main() -> int:
             return 1
         gradle_min_jdk, gradle_max_jdk = gradle_jdk_range(resolved_gradle)
         agp_min_jdk = minimum_jdk_for_agp(agp_version, resolved_gradle)
-        auto_jdk = max(gradle_min_jdk, agp_min_jdk)
-        if auto_jdk > gradle_max_jdk:
-            warnings.append(
-                f"No JDK satisfies Gradle {resolved_gradle} (Java {gradle_min_jdk}-{gradle_max_jdk}) "
-                f"and AGP {agp_version or 'unknown'} (Java {agp_min_jdk}+)."
-            )
-            auto_jdk = gradle_max_jdk
+        auto_jdk = max(gradle_min_jdk, agp_min_jdk, project_java_minimum)
     else:
         gradle_min_jdk = 0
         gradle_max_jdk = 0
         agp_min_jdk = minimum_jdk_for_agp(agp_version, "")
+        auto_jdk = max(agp_min_jdk, project_java_minimum)
         if requested_jdk == "auto":
             if agp_status == "unknown":
                 message = (
@@ -393,8 +419,21 @@ def main() -> int:
         )
 
     if requested_jdk == "auto":
+        if gradle_version_known and auto_jdk > gradle_max_jdk:
+            print(
+                "::error::No single JDK can satisfy the selected toolchain: "
+                f"Gradle {resolved_gradle} supports Java {gradle_min_jdk}-{gradle_max_jdk}, "
+                f"AGP {agp_version or 'unknown'} requires Java {agp_min_jdk}+, "
+                f"and project compiler/toolchain settings require Java {project_java_minimum}+.",
+                file=sys.stderr,
+            )
+            return 1
         resolved_jdk = str(auto_jdk)
-        jdk_source = "AGP/Gradle compatibility"
+        jdk_source = (
+            "project Java requirements + AGP/Gradle compatibility"
+            if project_java_minimum > max(gradle_min_jdk, agp_min_jdk)
+            else "AGP/Gradle compatibility"
+        )
     else:
         if not requested_jdk.isdigit():
             print(f"::error::Invalid JDK version: {requested_jdk}", file=sys.stderr)
@@ -405,6 +444,11 @@ def main() -> int:
             warnings.append(
                 f"Selected JDK {resolved_jdk} is below the detected/conservative "
                 f"AGP minimum Java {agp_min_jdk}."
+            )
+        if project_java_minimum and int(resolved_jdk) < project_java_minimum:
+            warnings.append(
+                f"Selected JDK {resolved_jdk} is below the detected project Java "
+                f"compiler/toolchain requirement {project_java_minimum}."
             )
         if gradle_version_known and not gradle_min_jdk <= int(resolved_jdk) <= gradle_max_jdk:
             warnings.append(
@@ -419,7 +463,10 @@ def main() -> int:
         and not at_least(resolved_gradle, agp_required_gradle)
     ):
         compatibility_status = "incompatible"
-    if requested_jdk != "auto" and int(resolved_jdk) < agp_min_jdk:
+    if requested_jdk != "auto" and (
+        int(resolved_jdk) < agp_min_jdk
+        or (project_java_minimum and int(resolved_jdk) < project_java_minimum)
+    ):
         compatibility_status = "incompatible"
     if (
         requested_jdk != "auto"
@@ -445,6 +492,8 @@ def main() -> int:
         "agp_detection_status": agp_status,
         "agp_versions": ",".join(agp_versions) if agp_versions else "unknown",
         "agp_required_gradle": agp_required_gradle or "unknown",
+        "project_java_minimum": str(project_java_minimum) if project_java_minimum else "unknown",
+        "project_java_versions": ",".join(map(str, project_java_versions)) if project_java_versions else "unknown",
         "wrapper_gradle_version": wrapper_version or ("unknown" if wrapper_status == "unknown" else "none"),
         "wrapper_detection_status": wrapper_status,
         "gradle_version_status": "known" if gradle_version_known else "unknown",
