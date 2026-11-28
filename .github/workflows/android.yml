@@ -618,9 +618,24 @@ jobs:
           if module_selection_mode == "explicit":
               unknown_modules = [module for module in requested_modules if module not in all_modules]
               if unknown_modules:
+                  # An invalid explicit path is a good point to run a full diagnostic scan:
+                  # show which application modules actually exist instead of only listing folders.
+                  for module in all_modules:
+                      collect_tasks(module)
+                  module_candidates = [
+                      module for module in all_modules
+                      if is_installable_app(task_cache.get(module, []))
+                  ]
+                  module_selection_reason = (
+                      "The requested module path was not found; all subprojects were inspected "
+                      "to report available Application candidates."
+                  )
                   format_error(
                       "Unknown module(s): " + ", ".join(unknown_modules)
                       + ". Available Gradle subprojects: " + ", ".join(all_modules)
+                      + ". Installable Android Application candidates: "
+                      + (", ".join(module_candidates) if module_candidates else "none detected")
+                      + ". Use one of these module paths, 'auto' for a unique candidate, or 'all'."
                   )
               modules_to_inspect = requested_modules
           else:
