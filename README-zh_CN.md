@@ -35,7 +35,7 @@ Godot CI 优先从 Godot.NET.Sdk 读取引擎版本，否则读取 project.godot
 - 当 `branch` 为空时，使用目标仓库的默认分支。
 - 支持通过 `CHECKOUT_TOKEN` secret 访问私有仓库或私有 submodules；未配置时回退到 `github.token`。
 - 通过共享的 `.github/actions/android-ci-prepare` composite action 设置 Temurin JDK、Gradle CLI 兜底版本、Android NDK 和 Gradle 缓存；setup、test、build jobs 共用同一套准备流程。
-- 校验请求的 NDK revision 是否完整安装；优先复用 `nttld/setup-ndk` 的本地缓存，只有确实缺失或不完整时才通过 `sdkmanager` 修复或安装。
+- 通过 Android SDK Manager 安装指定的 NDK revision，并校验完整的宿主工具链；也支持 beta/canary 通道中的精确版本。
 - 将公共 CI 逻辑放在 `.github/actions/android-ci-prepare/` 和 `.github/scripts/android-ci/` 中，避免 NDK 校验、pre-build 解析、Gradle 参数解析、unsigned 参数处理和 summary 渲染在多个 job 中重复。
 - 解析源码元信息：branch/ref、完整 SHA、短 SHA、仓库名和版本名。
 - 从 `gradle.properties` 读取 `versionName`、`VERSION_NAME` 或 `version`；都不存在时使用 GitHub run number 作为 `version_name`。
@@ -124,9 +124,9 @@ workflow 会把运行 workflow 的仓库按 `github.sha` checkout 到单独的 h
 | `macos-26-intel` | macOS Intel x86_64，固定 macOS 26 | x86_64 macOS 构建。 |
 | `macos-15-intel` | macOS Intel x86_64，固定 macOS 15 | 使用较旧 macOS 15 镜像的 x86_64 macOS 构建。 |
 
-共享准备 action 会在每个需要 Android 工具链的 job 中执行 JDK 设置、`nttld/setup-ndk` 和 NDK 校验。`setup-matrix` 调用时使用 `run_prebuild=false`；`test` 和 `build` 调用时使用 `run_prebuild=true`，因此还会解析、缓存并执行 pre-build 步骤。
+共享准备 action 会在每个需要 Android 工具链的 job 中设置 JDK 和 Android SDK 命令行工具，再通过 Android SDK Manager 安装并校验请求的 NDK。`setup-matrix` 调用时使用 `run_prebuild=false`；`test` 和 `build` 调用时使用 `run_prebuild=true`，因此还会解析、缓存并执行 pre-build 步骤。
 
-NDK 校验 helper 会探测宿主 OS，并检查对应的 NDK 工具链目录：Linux 使用 `linux-x86_64`，macOS 使用 `darwin-x86_64`。NDK 版本默认使用 `auto`：`.github/scripts/android-ci/resolve-ndk.py` 会读取目标项目 Gradle 中的 `ndkVersion` 声明（Groovy/Kotlin DSL、常见根项目变量、Gradle properties 和 Version Catalog 引用），再把解析结果传给 `nttld/setup-ndk` 和校验脚本。项目未声明时回退到 `r27d`；声明无法解析或存在冲突时会明确失败，不会静默安装错误版本。手动选择的 NDK 优先级最高，会覆盖项目检测。别名由 `.github/scripts/android-ci/ndk_versions.py` 映射为完整 SDK revision。校验时会搜索 canonical SDK 目录、`ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`、`~/.setup-ndk/<alias>`、`~/.setup-ndk/<revision>`、整个 `~/.setup-ndk` 缓存和 `$ANDROID_SDK_ROOT/ndk`。候选目录必须同时满足 `source.properties` 中的 `Pkg.Revision` 等于请求的完整 revision，并且存在对应宿主平台的 LLVM 工具链二进制。如果在 canonical SDK 目录外找到完整缓存，helper 会将其 symlink 到 `$ANDROID_SDK_ROOT/ndk/<full-revision>`，方便 Gradle `ndkVersion` 解析。只有找不到完整候选时，才回退执行 `sdkmanager --install ndk;<full-revision>`。
+NDK 校验 helper 会探测宿主 OS，并检查对应的 NDK 工具链目录：Linux 使用 `linux-x86_64`，macOS 使用 `darwin-x86_64`。NDK 版本默认使用 `auto`：`.github/scripts/android-ci/resolve-ndk.py` 会读取目标项目 Gradle 中的 `ndkVersion` 声明（Groovy/Kotlin DSL、常见根项目变量、Gradle properties 和 Version Catalog 引用），再把解析结果传给校验脚本。项目未声明时回退到 `r27d`；声明无法解析或存在冲突时会明确失败，不会静默安装错误版本。手动选择的 NDK 优先级最高，会覆盖项目检测。别名由 `.github/scripts/android-ci/ndk_versions.py` 映射为完整 SDK revision。校验时会检查 canonical SDK NDK 目录，以及有效的 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT` 候选目录。候选目录必须同时满足 `source.properties` 中的 `Pkg.Revision` 等于请求的完整 revision，并且存在对应宿主平台的 LLVM 工具链二进制。如果请求的版本缺失或不完整，helper 会通过 `sdkmanager --install "ndk;<full-revision>" --channel=3` 安装精确版本；channel 3 提供 stable、beta 和 canary 包，而明确指定的 revision 会确保不会漂移到其他 NDK 版本。
 
 pre-build 缓存 key 包含 `runner.os`、`runner.arch`、仓库名、源码 SHA、请求的 NDK、Go 版本，以及运行时对 `run`、`buildScript`、`libcore` 目录计算出的 SHA256。这样不会在 composite action 中使用 `hashFiles(...)`，也避免 macOS Intel、macOS arm64 和 Linux 运行复用不兼容缓存。
 
