@@ -124,7 +124,7 @@ workflow 会把运行 workflow 的仓库按 `github.sha` checkout 到单独的 h
 | `macos-26-intel` | macOS Intel x86_64，固定 macOS 26 | x86_64 macOS 构建。 |
 | `macos-15-intel` | macOS Intel x86_64，固定 macOS 15 | 使用较旧 macOS 15 镜像的 x86_64 macOS 构建。 |
 
-共享准备 action 会在每个需要 Android 工具链的 job 中设置 JDK 和 Android SDK 命令行工具，再通过 Android SDK Manager 安装并校验请求的 NDK。`setup-matrix` 调用时使用 `run_prebuild=false`；`test` 和 `build` 调用时使用 `run_prebuild=true`，因此还会解析、缓存并执行 pre-build 步骤。
+共享准备 action 会在每个需要 Android 工具链的 job 中设置 JDK 和 Android SDK 命令行工具，并安装、校验请求的 NDK：稳定版使用 Google SDK Manager，已登记的预览版使用带固定校验和的官方发布归档。`setup-matrix` 调用时使用 `run_prebuild=false`；`test` 和 `build` 调用时使用 `run_prebuild=true`，因此还会解析、缓存并执行 pre-build 步骤。
 
 NDK 校验 helper 会探测宿主 OS，并检查对应的 NDK 工具链目录：Linux 使用 `linux-x86_64`，macOS 使用 `darwin-x86_64`。NDK 版本默认使用 `auto`：`.github/scripts/android-ci/resolve-ndk.py` 会读取目标项目 Gradle 中的 `ndkVersion` 声明（Groovy/Kotlin DSL、常见根项目变量、Gradle properties 和 Version Catalog 引用），再分别解析 SDK 安装目录的基础 revision 和 `source.properties` 中的包 revision。项目未声明时回退到 `r27d`；声明无法解析或存在冲突时会明确失败，不会静默安装错误版本。手动选择的 NDK 优先级最高，会覆盖项目检测。稳定版通过 `sdkmanager` 安装；`.github/scripts/android-ci/ndk_versions.py` 中登记的预览版则从 Google 官方 NDK 发布归档下载，并按官方公布的 SHA-1 校验后解压到基础 revision 对应的目录。例如，Gradle 中的 `29.0.13113456` 对应 `Pkg.Revision=29.0.13113456-beta1`；Linux 使用 `dl.google.com` 提供的官方 ZIP，但 SDK 安装目录仍为 `ndk/29.0.13113456`。在导出 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT` 前，会同时验证 `Pkg.BaseRevision`、`Pkg.Revision` 和宿主平台对应的 LLVM 工具链二进制。Toolchain Tests 会真实下载 beta 归档，并验证校验和、解压结果、版本元数据和工具链文件。
 
@@ -423,7 +423,7 @@ gh workflow run android.yml \
 - 勾选 `signing=true` 但签名变量/仓库配置不完整；workflow 会对 release/AAB/聚合任务自动回退到 `-Punsigned`，但目标项目本身也需要支持该 unsigned 属性。
 - 自定义 `pre_build_command` 执行失败。
 - auto 前置构建模式执行后未生成 `app/libs/libcore.aar`。
-- 请求的 NDK 版本无法安装、SDK Manager 中不存在对应版本/通道、宿主系统对应的 NDK 工具链缺失，或校验后仍不完整。
+- 请求的 NDK 无法从对应的 SDK Manager 包或已登记的官方预览版归档下载、归档校验和不匹配、宿主系统对应的工具链缺失，或最终校验失败。
 
 ## 开源许可
 
