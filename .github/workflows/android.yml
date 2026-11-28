@@ -1,5 +1,5 @@
 name: Android CI
-run-name: "${{ inputs.repository || github.repository }} • ${{ inputs.branch || 'default branch' }} • ${{ inputs.module || 'app' }} • ${{ inputs.build_type }} • ${{ inputs.os_version }} • #${{ github.run_number }}"
+run-name: "${{ inputs.repository || github.repository }} • ${{ inputs.branch || 'default branch' }} • module ${{ inputs.module || 'auto' }} • ${{ inputs.build_type }} • ${{ inputs.os_version }} • #${{ github.run_number }}"
 
 on:
   workflow_dispatch:
@@ -22,9 +22,9 @@ on:
         options: ['false', 'true', 'recursive']
 
       module:
-        description: 'Target Module(s), comma-separated'
+        description: 'Android application module(s): auto, all, or comma-separated Gradle paths'
         required: true
-        default: 'app'
+        default: 'auto'
 
       build_flavor:
         description: 'Build Flavor(s), comma-separated'
@@ -121,7 +121,7 @@ on:
       module:
         type: string
         required: false
-        default: "app"
+        default: "auto"
       build_flavor:
         type: string
         required: false
@@ -439,13 +439,15 @@ jobs:
           import sys
           from datetime import datetime, timezone
 
-          def canonical_module(raw: str) -> str:
-              raw = raw.strip()
-              if not raw:
-                  return ""
-              if not raw.startswith(":"):
-                  raw = ":" + raw
-              return re.sub(r":+", ":", raw)
+          sys.path.insert(0, os.environ["CI_HELPERS_DIR"])
+          from module_detection import (
+              ModuleSelectionError,
+              canonical_module,
+              is_installable_application as is_installable_app,
+              parse_gradle_projects,
+              parse_module_request,
+              select_modules,
+          )
 
           def module_dir(module: str) -> str:
               return module.lstrip(":").replace(":", "/")
@@ -460,9 +462,77 @@ jobs:
           def parse_csv(value: str) -> list[str]:
               return [item.strip() for item in value.split(",") if item.strip()] if value else []
 
+          task_cache: dict[str, list[str]] = {}
+          all_modules: list[str] = []
+          module_candidates: list[str] = []
+          candidate_modules: list[str] = []
+          selected_modules: list[str] = []
+          module_selection_mode = "not-resolved"
+          module_selection_reason = "Module selection has not run."
+          module_summary_written = False
+
+          def write_module_summary(status: str, error: str = "", detail: str = "") -> None:
+              nonlocal_placeholder = None
+              global module_summary_written
+              if module_summary_written:
+                  return
+              module_summary_written = True
+
+              requested = module_input or "auto"
+              scanned = set(task_cache)
+              lines = [
+                  "## Android module detection",
+                  "",
+                  f"- **Status:** {status}",
+                  f"- **Requested module:** `{requested}`",
+                  f"- **Selection mode:** `{module_selection_mode}`",
+                  f"- **Detected Gradle subprojects:** {len(all_modules)}",
+                  f"- **Application candidates:** {', '.join(module_candidates) if module_candidates else 'none detected / not fully inspected'}",
+                  f"- **Resolved module(s):** {', '.join(selected_modules) if selected_modules else 'none'}",
+                  f"- **Selection reason:** {module_selection_reason}",
+              ]
+              if error:
+                  lines.extend(["", f"- **Failure reason:** {error}"])
+              if detail:
+                  lines.extend(["", "<details><summary>Gradle discovery output</summary>", "", "```text", detail, "```", "</details>"])
+              lines.extend([
+                  "",
+                  "| Gradle subproject | Detection result | Relevant tasks |",
+                  "| --- | --- | --- |",
+              ])
+              for module in all_modules:
+                  tasks = task_cache.get(module)
+                  if module in selected_modules:
+                      result = "Selected application"
+                  elif module in module_candidates:
+                      result = "Application candidate"
+                  elif module in scanned:
+                      result = "No installable application tasks"
+                  else:
+                      result = "Not inspected (explicit module selection)"
+                  task_text = ", ".join(tasks[:12]) if tasks else ("none" if tasks is not None else "not inspected")
+                  if tasks and len(tasks) > 12:
+                      task_text += f" … (+{len(tasks) - 12})"
+                  safe_module = module.replace("|", "\\|")
+                  safe_result = result.replace("|", "\\|")
+                  safe_tasks = task_text.replace("|", "\\|").replace("
+", " ")
+                  lines.append(f"| `{safe_module}` | {safe_result} | {safe_tasks} |")
+              lines.append("")
+
+              summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
+              if summary_path:
+                  with open(summary_path, "a", encoding="utf-8") as stream:
+                      stream.write("
+".join(lines) + "
+")
+              print("
+".join(lines))
+
           def run_gradle(*args: str) -> str:
               gradle_command = os.environ.get("GRADLE_COMMAND", "").strip()
               if not gradle_command:
+                  write_module_summary("failed", "GRADLE_COMMAND was not resolved.")
                   print("::error::GRADLE_COMMAND was not resolved.", file=sys.stderr)
                   sys.exit(1)
               cmd = [gradle_command, "--no-daemon", "--console=plain", *args]
@@ -474,23 +544,20 @@ jobs:
                   check=False,
               )
               if proc.returncode != 0:
+                  output = proc.stdout.strip()
+                  detail = "
+".join(output.splitlines()[-30:])
+                  write_module_summary(
+                      "failed",
+                      f"Gradle discovery command failed: {' '.join(args)} (exit {proc.returncode}).",
+                      detail,
+                  )
                   print(proc.stdout, file=sys.stderr)
                   sys.exit(proc.returncode)
               return proc.stdout
 
           def available_modules() -> list[str]:
-              out = run_gradle("projects")
-              modules: list[str] = []
-              for line in out.splitlines():
-                  match = re.search(r"Project '(:[^']+)'", line)
-                  if not match:
-                      continue
-                  module = canonical_module(match.group(1))
-                  if module != ":" and module not in modules:
-                      modules.append(module)
-              return modules
-
-          task_cache: dict[str, list[str]] = {}
+              return parse_gradle_projects(run_gradle("projects"))
 
           def collect_tasks(module: str) -> list[str]:
               module = canonical_module(module)
@@ -511,11 +578,6 @@ jobs:
               task_cache[module] = tasks
               return tasks
 
-          def is_installable_app(tasks: list[str]) -> bool:
-              return any(task.startswith("install") for task in tasks) or any(
-                  task.startswith("bundle") and not task.endswith("Aar") for task in tasks
-              )
-
           def variant_from_task(task: str) -> tuple[str, str, str] | None:
               match = re.match(r"^(assemble|bundle)([A-Z][A-Za-z0-9]*)?(Debug|Release)$", task)
               if not match:
@@ -535,6 +597,7 @@ jobs:
               return build_type == build_type_input and artifact_type == "apk"
 
           def format_error(message: str) -> None:
+              write_module_summary("failed", message)
               print(f"::error::{message}", file=sys.stderr)
               sys.exit(1)
 
@@ -545,6 +608,11 @@ jobs:
           build_type_input = os.environ.get("INPUT_BUILD_TYPE", "").strip()
           date_long = os.environ.get("DATE_LONG", "").strip() or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
 
+          try:
+              module_selection_mode, requested_modules = parse_module_request(module_input)
+          except ModuleSelectionError as exc:
+              format_error(str(exc))
+
           if build_type_input not in {"debug", "release", "aab", "all"}:
               format_error(f"Unsupported build_type: {build_type_input}")
 
@@ -553,31 +621,33 @@ jobs:
           if not all_modules:
               format_error("No Gradle subprojects were found. Ensure the target repository contains an Android project.")
 
-          if module_input:
-              candidate_modules = []
-              unknown_modules = []
-              for item in parse_csv(module_input):
-                  module = canonical_module(item)
-                  if module not in all_modules:
-                      unknown_modules.append(module or item)
-                  else:
-                      candidate_modules.append(module)
+          if module_selection_mode == "explicit":
+              unknown_modules = [module for module in requested_modules if module not in all_modules]
               if unknown_modules:
                   format_error(
-                      "Unknown module(s): " + ", ".join(sorted(set(unknown_modules)))
-                      + ". Available subprojects: " + ", ".join(all_modules)
+                      "Unknown module(s): " + ", ".join(unknown_modules)
+                      + ". Available Gradle subprojects: " + ", ".join(all_modules)
                   )
+              modules_to_inspect = requested_modules
           else:
-              candidate_modules = [module for module in all_modules if is_installable_app(collect_tasks(module))]
+              modules_to_inspect = all_modules
 
-          if not candidate_modules:
-              if module_input:
-                  format_error(
-                      "No valid modules remain after filtering. Check the module input and the target branch."
-                  )
-              format_error(
-                  "No installable Android application modules were found. Specify the module input explicitly if the project layout is unusual."
-              )
+          for module in modules_to_inspect:
+              collect_tasks(module)
+
+          try:
+              selection = select_modules(module_input, all_modules, task_cache)
+          except ModuleSelectionError as exc:
+              module_candidates = [
+                  module for module in all_modules
+                  if module in task_cache and is_installable_app(task_cache[module])
+              ]
+              format_error(str(exc))
+
+          candidate_modules = selection["selected"]
+          module_candidates = selection["candidates"]
+          module_selection_reason = selection["reason"]
+          selected_modules = list(candidate_modules)
 
           matrix_entries: list[dict[str, str]] = []
           module_errors: list[str] = []
@@ -585,13 +655,6 @@ jobs:
 
           for module in candidate_modules:
               tasks = collect_tasks(module)
-              if not is_installable_app(tasks):
-                  if module_input:
-                      format_error(
-                          f"Module '{module}' does not expose installable Android tasks. Expected app-style bundle/install tasks, but only library-style tasks were found."
-                      )
-                  continue
-
               module_dir_value = module_dir(module)
               module_safe = slug(module_dir_value.replace("/", "-"), "module")
 
@@ -663,8 +726,14 @@ jobs:
               format_error("No build variants matched the current filters.")
 
           matrix = {"include": matrix_entries}
+          selected_modules = list(dict.fromkeys(item["module"] for item in matrix_entries))
+          write_module_summary("success")
           print(f"repository={repository}")
           print(f"repository_name={repo_name}")
+          print(f"resolved_modules={','.join(selected_modules)}")
+          print(f"module_selection_mode={module_selection_mode}")
+          print(f"module_selection_reason={module_selection_reason}")
+          print(f"module_candidates={','.join(module_candidates)}")
           print(f"matrix={json.dumps(matrix, ensure_ascii=False)}")
           PY
 
@@ -713,6 +782,10 @@ jobs:
               "source_sha": ${{ toJson(steps.source.outputs.source_sha) }},
               "source_short_sha": ${{ toJson(steps.source.outputs.source_short_sha) }},
               "module": ${{ toJson(inputs.module) }},
+              "resolved_modules": ${{ toJson(steps.meta.outputs.resolved_modules) }},
+              "module_selection_mode": ${{ toJson(steps.meta.outputs.module_selection_mode) }},
+              "module_selection_reason": ${{ toJson(steps.meta.outputs.module_selection_reason) }},
+              "module_candidates": ${{ toJson(steps.meta.outputs.module_candidates) }},
               "build_flavor": ${{ toJson(inputs.build_flavor) }},
               "build_type": ${{ toJson(inputs.build_type) }},
               "build_options": ${{ toJson(inputs.build_options) }},
