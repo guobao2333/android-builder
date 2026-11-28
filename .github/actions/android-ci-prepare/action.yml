@@ -109,21 +109,19 @@ runs:
         fi
         echo "$GRADLE_INSTALL_DIR/bin" >> "$GITHUB_PATH"
 
-    - name: Setup NDK
-      id: setup_ndk
-      uses: nttld/setup-ndk@v1
+    # Use Google's Android SDK Manager for NDK packages, including beta/canary
+    # revisions that third-party direct-download actions may not recognize.
+    - name: Setup Android SDK command-line tools
+      uses: android-actions/setup-android@v4
       with:
-        ndk-version: ${{ inputs.ndk_version }}
-        add-to-path: true
-        link-to-sdk: true
-        local-cache: true
+        packages: ''
+        log-accepted-android-sdk-licenses: false
 
-    - name: Verify NDK toolchain
+    - name: Install and verify NDK with SDK Manager
       shell: bash
       env:
         CI_HELPERS_DIR: ${{ inputs.helpers_dir }}
         REQUESTED_NDK_VERSION: ${{ inputs.ndk_version }}
-        SETUP_NDK_PATH: ${{ steps.setup_ndk.outputs['ndk-path'] }}
       run: |
         set -euo pipefail
         bash "$CI_HELPERS_DIR/verify-ndk.sh"
