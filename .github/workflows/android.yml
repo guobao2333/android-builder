@@ -472,7 +472,6 @@ jobs:
           module_summary_written = False
 
           def write_module_summary(status: str, error: str = "", detail: str = "") -> None:
-              nonlocal_placeholder = None
               global module_summary_written
               if module_summary_written:
                   return
@@ -515,19 +514,15 @@ jobs:
                       task_text += f" … (+{len(tasks) - 12})"
                   safe_module = module.replace("|", "\\|")
                   safe_result = result.replace("|", "\\|")
-                  safe_tasks = task_text.replace("|", "\\|").replace("
-", " ")
+                  safe_tasks = task_text.replace("|", "\\|").replace("\n", " ")
                   lines.append(f"| `{safe_module}` | {safe_result} | {safe_tasks} |")
               lines.append("")
 
               summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
               if summary_path:
                   with open(summary_path, "a", encoding="utf-8") as stream:
-                      stream.write("
-".join(lines) + "
-")
-              print("
-".join(lines))
+                      stream.write("\n".join(lines) + "\n")
+              print("\n".join(lines))
 
           def run_gradle(*args: str) -> str:
               gradle_command = os.environ.get("GRADLE_COMMAND", "").strip()
@@ -545,8 +540,7 @@ jobs:
               )
               if proc.returncode != 0:
                   output = proc.stdout.strip()
-                  detail = "
-".join(output.splitlines()[-30:])
+                  detail = "\n".join(output.splitlines()[-30:])
                   write_module_summary(
                       "failed",
                       f"Gradle discovery command failed: {' '.join(args)} (exit {proc.returncode}).",
