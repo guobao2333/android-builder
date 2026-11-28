@@ -124,7 +124,7 @@ workflow 会把运行 workflow 的仓库按 `github.sha` checkout 到单独的 h
 | `macos-26-intel` | macOS Intel x86_64，固定 macOS 26 | x86_64 macOS 构建。 |
 | `macos-15-intel` | macOS Intel x86_64，固定 macOS 15 | 使用较旧 macOS 15 镜像的 x86_64 macOS 构建。 |
 
-共享准备 action 会在每个需要 Android 工具链的 job 中设置 JDK 和 Android SDK 命令行工具，并安装、校验请求的 NDK：稳定版使用 Google SDK Manager，已登记的预览版使用带固定校验和的官方发布归档。`setup-matrix` 调用时使用 `run_prebuild=false`；`test` 和 `build` 调用时使用 `run_prebuild=true`，因此还会解析、缓存并执行 pre-build 步骤。
+共享准备 action 会在每个需要 Android 工具链的 job 中设置 JDK 和 Android SDK 命令行工具，并安装、校验请求的 NDK：稳定版使用 Google SDK Manager，已登记的预览版使用带固定校验和的官方发布归档。`setup-matrix` 调用时使用 `run_prebuild=false`；`test` 和 `build` 调用时使用 `run_prebuild=true`，因此还会解析、缓存并执行 pre-build 步骤。 在 `test` 和 `build` 中还会扫描 Cargo 项目及 Gradle/Cargo 配置，按显式 Rust target 或 Android ABI filters 安装对应 Rust 标准库 target；不会无条件安装全部 ABI。安装状态、Cargo manifest、target 和失败原因会写入 Job Summary。
 
 NDK 校验 helper 会探测宿主 OS，并检查对应的 NDK 工具链目录：Linux 使用 `linux-x86_64`，macOS 使用 `darwin-x86_64`。NDK 版本默认使用 `auto`：`.github/scripts/android-ci/resolve-ndk.py` 会读取目标项目 Gradle 中的 `ndkVersion` 声明（Groovy/Kotlin DSL、常见根项目变量、Gradle properties 和 Version Catalog 引用），再分别解析 SDK 安装目录的基础 revision 和 `source.properties` 中的包 revision。项目未声明时回退到 `r27d`；声明无法解析或存在冲突时会明确失败，不会静默安装错误版本。手动选择的 NDK 优先级最高，会覆盖项目检测。稳定版通过 `sdkmanager` 安装；`.github/scripts/android-ci/ndk_versions.py` 中登记的预览版则从 Google 官方 NDK 发布归档下载，并按官方公布的 SHA-1 校验后解压到基础 revision 对应的目录。例如，Gradle 中的 `29.0.13113456` 对应 `Pkg.Revision=29.0.13113456-beta1`；Linux 使用 `dl.google.com` 提供的官方 ZIP，但 SDK 安装目录仍为 `ndk/29.0.13113456`。在导出 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT` 前，会同时验证 `Pkg.BaseRevision`、`Pkg.Revision` 和宿主平台对应的 LLVM 工具链二进制。Toolchain Tests 会真实下载 beta 归档，并验证校验和、解压结果、版本元数据和工具链文件。
 
@@ -148,7 +148,7 @@ workflow 会在执行 Gradle 前自动解析 Android 工具链：
 
 ## Workflow 流程图与摘要
 
-Actions 可视化流程图的 job 名称也会携带必要上下文：setup 节点显示目标仓库和模块过滤条件；Test/Build 节点显示实际解析出的 AGP、Gradle 与 JDK 版本；Build 节点还显示模块和具体任务。GitHub Job Summary 会在解析输入与构建 matrix 前先写入 `Android module detection`，展示请求模式、全部 Gradle subprojects、Application 候选、最终选择、判断依据及相关 tasks；即使模块探测失败，这部分诊断也会保留。随后再生成 Mermaid 工具链流程图、完整输入和 matrix 表格。
+Actions 可视化流程图的 job 名称也会携带必要上下文：setup 节点显示目标仓库和模块过滤条件；Test/Build 节点显示实际解析出的 AGP、Gradle 与 JDK 版本；Build 节点还显示模块和具体任务。GitHub Job Summary 会在解析输入与构建 matrix 前先写入 `Android module detection`，展示请求模式、全部 Gradle subprojects、Application 候选、最终选择、判断依据及相关 tasks；即使模块探测失败，这部分诊断也会保留。随后再生成 Mermaid 工具链流程图、完整输入和 matrix 表格。 Android Rust target 准备也会独立写入摘要，展示安装的标准库和 target 状态。
 
 ## build_type 行为
 
