@@ -123,7 +123,7 @@ Available runner labels include Linux x64 and macOS runners:
 | `macos-26-intel` | macOS Intel x86_64, pinned macOS 26 | x86_64 macOS builds. |
 | `macos-15-intel` | macOS Intel x86_64, pinned macOS 15 | x86_64 macOS builds with older macOS 15 image. |
 
-The shared preparation action sets up JDK and Android SDK command-line tools, then installs and verifies the requested NDK through Google's SDK Manager in every job that needs Android tooling. `setup-matrix` calls it with `run_prebuild=false`; `test` and `build` call it with `run_prebuild=true` so they also resolve, cache, and run pre-build steps.
+The shared preparation action sets up JDK and Android SDK command-line tools, then installs and verifies the requested NDK in every job that needs Android tooling: stable revisions use Google's SDK Manager, while configured preview revisions use their checksum-pinned official release archives. `setup-matrix` calls it with `run_prebuild=false`; `test` and `build` call it with `run_prebuild=true` so they also resolve, cache, and run pre-build steps.
 
 The NDK verification helper detects the host OS and checks the matching NDK toolchain directory: `linux-x86_64` on Linux and `darwin-x86_64` on macOS. NDK version defaults to `auto`: `.github/scripts/android-ci/resolve-ndk.py` reads the target project's Gradle `ndkVersion` declarations (Groovy/Kotlin DSL, common root variables, Gradle properties and version-catalog references), then resolves the SDK install directory's base revision and `source.properties` package revision separately. If no declaration exists, it falls back to `r27d`. Conflicting or unresolved declarations fail with an actionable error instead of silently installing the wrong NDK. A manually selected NDK always overrides project detection. Stable revisions are installed through `sdkmanager`. Preview releases known to `.github/scripts/android-ci/ndk_versions.py` are downloaded from Google's official NDK release archive, checked against the published SHA-1 checksum, and extracted into the base-revision directory. For example, Gradle's `29.0.13113456` maps to `Pkg.Revision=29.0.13113456-beta1`; its official Linux ZIP is downloaded directly from `dl.google.com`, while the SDK install directory remains `ndk/29.0.13113456`. Verification requires both the expected `Pkg.BaseRevision` and `Pkg.Revision`, plus the host-specific LLVM toolchain binary, before exposing `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`. The real NDK beta archive download, checksum, extraction, metadata, and toolchain are exercised by the toolchain test workflow.
 
@@ -422,7 +422,7 @@ gh workflow run android.yml \
 - `signing=true` was selected but signing variables/repository config are incomplete; the workflow falls back to `-Punsigned` for release/AAB/aggregate tasks, but the target project also needs to support that unsigned property.
 - Custom `pre_build_command` fails.
 - Auto pre-build mode runs but does not produce `app/libs/libcore.aar`.
-- The requested NDK version cannot be installed, the SDK Manager package/channel is unavailable, the host-specific NDK toolchain is missing, or verification still finds the installation incomplete.
+- The requested NDK cannot be downloaded from its SDK Manager package or configured official preview archive, its archive checksum does not match, the host-specific toolchain is missing, or final verification fails.
 
 ## License
 
