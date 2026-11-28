@@ -46,6 +46,7 @@ jobs:
           set -euo pipefail
           python3 .github/scripts/android-ci/tests/test-resolve-toolchain.py
           python3 .github/scripts/android-ci/tests/test-module-detection.py
+          python3 .github/scripts/android-ci/tests/test-android-matrix.py
           python3 .github/scripts/android-ci/tests/test-resolve-ndk.py
           python3 .github/scripts/flutter-ci/tests/test-resolve-flutter.py
           python3 .github/scripts/flutter-ci/tests/test-configure-android-renderer.py
