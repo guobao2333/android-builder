@@ -66,9 +66,8 @@ candidate_ndk_dirs_from_root() {
     echo "$root"
   fi
 
-  # nttld/setup-ndk local-cache may restore to ~/.setup-ndk/rXX with the
-  # actual android-ndk-rXX directory nested below it. Search a bounded depth
-  # for source.properties rather than assuming a single cache layout.
+  # Search a bounded depth for source.properties rather than assuming
+  # a fixed SDK Manager package layout.
   find "$root" -mindepth 1 -maxdepth 5 -type f -name source.properties -print 2>/dev/null \
     | while IFS= read -r source_properties; do
         dirname "$source_properties"
@@ -81,12 +80,8 @@ find_complete_requested_ndk() {
 
   for root in \
     "$CANONICAL_NDK_DIR" \
-    "${SETUP_NDK_PATH:-}" \
     "${ANDROID_NDK_HOME:-}" \
     "${ANDROID_NDK_ROOT:-}" \
-    "$HOME/.setup-ndk/$REQUESTED_NDK_VERSION" \
-    "$HOME/.setup-ndk/$REQUESTED_NDK_REVISION" \
-    "$HOME/.setup-ndk" \
     "$SDK_ROOT/ndk"; do
     [ -n "$root" ] || continue
     while IFS= read -r candidate; do
@@ -132,7 +127,9 @@ install_requested_ndk() {
   license_pipeline_status=( "${PIPESTATUS[@]}" )
   license_status="${license_pipeline_status[1]:-1}"
 
-  yes 2>/dev/null | "$sdkmanager" --sdk_root="$SDK_ROOT" --install "ndk;$REQUESTED_NDK_REVISION"
+  # Channel 3 includes stable, beta, and canary releases. The requested
+  # revision is pinned explicitly, so this cannot silently select a newer NDK.
+  yes 2>/dev/null | "$sdkmanager" --sdk_root="$SDK_ROOT" --channel=3 --install "ndk;$REQUESTED_NDK_REVISION"
   install_pipeline_status=( "${PIPESTATUS[@]}" )
   install_status="${install_pipeline_status[1]:-1}"
   set -o pipefail
