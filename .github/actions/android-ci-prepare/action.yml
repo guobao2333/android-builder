@@ -109,15 +109,15 @@ runs:
         fi
         echo "$GRADLE_INSTALL_DIR/bin" >> "$GITHUB_PATH"
 
-    # Use Google's Android SDK Manager for NDK packages, including beta/canary
-    # revisions that third-party direct-download actions may not recognize.
+    # Prepare SDK Manager for stable NDK packages. verify-ndk.sh downloads
+    # preview releases from Google's official NDK archives when not in sdkmanager.
     - name: Setup Android SDK command-line tools
       uses: android-actions/setup-android@v4
       with:
         packages: ''
         log-accepted-android-sdk-licenses: false
 
-    - name: Install and verify NDK with SDK Manager
+    - name: Install and verify NDK
       shell: bash
       env:
         CI_HELPERS_DIR: ${{ inputs.helpers_dir }}
